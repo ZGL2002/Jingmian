@@ -40,3 +40,9 @@ def test_system_prompt_enforces_one_question_per_turn():
     assert "每轮只输出一个提问" in p
     assert "先问最关键" in p
     assert "一次输出多个问题视为违规" in p
+
+def test_system_prompt_output_discipline():
+    p = build_system_prompt(None)
+    assert "禁止替候选人回答" in p
+    assert "不得出现" in p
+    assert "你>" in p

@@ -10,7 +10,9 @@ from interview_agent.storage import read_jsonl
 class ScriptedLLM:
     def __init__(self, turns):
         self.turns = list(turns)
+        self.last_max_tokens = None
     def chat(self, messages, tools=None, max_tokens=None):
+        self.last_max_tokens = max_tokens
         return self.turns.pop(0)
 
 def make_agent(tmp_path, turns, min_questions=2):
@@ -100,3 +102,15 @@ def test_llm_retry_after_transient_error(tmp_path):
     r = agent.run_turn()
     assert r.content == "重试成功"
     assert flaky.calls == 3
+
+def test_content_truncated_at_role_leak(tmp_path):
+    agent, s = make_agent(tmp_path, [AssistantTurn(content="请介绍你的项目。\n你> 我觉得这个项目很有挑战")])
+    r = agent.run_turn()
+    assert r.content == "请介绍你的项目。"
+    entries = read_jsonl(s.transcript_path)
+    assert "你>" not in entries[-1]["content"]
+
+def test_turn_chat_passes_max_tokens_cap(tmp_path):
+    agent, s = make_agent(tmp_path, [AssistantTurn(content="问题？")])
+    agent.run_turn()
+    assert agent.llm.last_max_tokens == 1000

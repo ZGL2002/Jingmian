@@ -5,7 +5,7 @@ from .config import load_config, require_api_key
 from .models import SessionConfig, SessionState
 from .resume import extract_text, parse_resume
 from .session import InterviewSession
-from .agent import ToolAgent
+from .agent import ToolAgent, _strip_role_leak
 from .evaluate import run_evaluation
 from .llm import DeepSeekClient, LLMError
 from .tools import default_registry
@@ -89,7 +89,7 @@ def run_cli(cfg: dict, llm=None, user_inputs: list[str] | None = None) -> str:
     agent = ToolAgent(llm, registry, session, tool_ctx)
 
     opening = llm.chat(session.messages, tools=registry.schemas())
-    opening_text = opening.content or "你好，我是面试官，我们开始。"
+    opening_text = _strip_role_leak(opening.content or "你好，我是面试官，我们开始。")
     session.add_interviewer_message(opening_text)  # OPENING 状态不计题数
     print(opening_text)
     session.begin_questions()
