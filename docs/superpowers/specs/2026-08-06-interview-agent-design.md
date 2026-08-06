@@ -27,7 +27,7 @@
 - 结束评估：四个维度评分 + 优缺点 + 改进建议。
 - 长回答保护：用户单次回答超过阈值（默认 100,000 字，可配置）时自动落盘到文件，对话记录只存摘要与文件指针，防止撑爆上下文；另有基于上下文占用比例的紧急保护。
 - 本场记录落盘：简历副本、实际提示词、对话记录（JSONL）、长回答全文、评估报告（Markdown）。
-- 工具集：`read_file` / `write_file` / `append_file` / `edit_file` / `list_dir` / `append_transcript`。
+- 工具集：`read_file` / `write_file` / `append_file` / `edit_file` / `list_dir` / `append_transcript` / `request_wrap`。
 - 安全：密钥仅走环境变量；路径强校验；无 shell / 任意命令执行工具。
 
 ### 第一版明确不做（未来扩展）
@@ -145,6 +145,7 @@ interviews/
 | `edit_file` | 精确修改文件局部内容（如调整提示词模板） |
 | `list_dir` | 查看会话目录 / 记录目录内容 |
 | `append_transcript` | 带格式约束的对话记录追加：自动写入角色、轮次、时间戳，保证 JSONL 结构统一 |
+| `request_wrap` | 面试官请求收尾的信号工具：满最低题数时返回 WRAP_REQUESTED 并进入收尾状态；未满时返回错误并强制继续提问 |
 
 所有工具经统一注册表暴露给模型，含 JSON Schema 校验。
 
