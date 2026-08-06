@@ -143,6 +143,8 @@ def run_cli(cfg: dict, llm=None, user_inputs: list[str] | None = None) -> str:
         if result.wrap_requested or session.state is SessionState.WRAPPING:
             break
 
+    print("\n好的，今天的面试到这里正式结束。感谢你的参与！")
+    print("评估报告生成中，请稍候…")
     session.to_evaluating()
     report_path = run_evaluation(session, llm)
     session.to_done()

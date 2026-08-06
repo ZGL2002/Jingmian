@@ -33,6 +33,8 @@ def test_run_cli_full_flow(tmp_path, monkeypatch, capsys):
     assert "你好，我是面试官" in out
     assert "第一个问题" in out
     assert out.count("第一个问题") == 1
+    assert "今天的面试到这里正式结束" in out
+    assert "评估报告生成中，请稍候" in out
     assert "评估报告已生成" in out
 
 def test_multiline_answer_is_single_message(tmp_path, capsys):
@@ -100,6 +102,9 @@ def test_eof_ends_gracefully(tmp_path, monkeypatch, capsys):
     ])
     report = run_cli(cfg, llm=llm, user_inputs=None)
     assert Path(report).name == "report.md"
+    out = capsys.readouterr().out
+    assert "今天的面试到这里正式结束" in out
+    assert "评估报告生成中，请稍候" in out
 
 def test_run_cli_scanned_pdf_raises_system_exit(tmp_path):
     from pypdf import PdfWriter
