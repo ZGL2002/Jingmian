@@ -46,3 +46,7 @@ def test_system_prompt_output_discipline():
     assert "禁止替候选人回答" in p
     assert "不得出现" in p
     assert "你>" in p
+
+def test_system_prompt_empty_answer_rule():
+    p = build_system_prompt(None)
+    assert "不要替候选人补充回答" in p

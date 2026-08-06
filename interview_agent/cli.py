@@ -17,6 +17,7 @@ from .storage import atomic_write
 END_COMMANDS = {"结束", "exit", "/end"}
 PASTE_END = "END"
 RESUME_SUFFIXES = {".txt", ".md", ".pdf"}
+END_SENTINEL = "__END__"
 
 
 def _default_user_id(cfg: dict) -> str:
@@ -44,7 +45,10 @@ def _read_resume(user_inputs: list[str] | None) -> tuple[str | None, list[str] |
         print("请粘贴简历文本（完成后输入一行 END），或直接输入文件路径（.txt/.md/.pdf）：")
         lines = []
         while True:
-            line = input()
+            try:
+                line = input()
+            except EOFError:
+                break
             if line.strip() == PASTE_END:
                 break
             lines.append(line)
@@ -57,6 +61,27 @@ def _read_resume(user_inputs: list[str] | None) -> tuple[str | None, list[str] |
             break
         consumed.append(line)
     return _finish_resume(consumed), remaining or None
+
+
+def _read_answer(lines: list[str] | None, index: int, interactive: bool) -> tuple[str | None, int]:
+    """读取一条回答：连续非空行合并为一段，空行提交；END 命令仅在回答开头生效；EOF/耗尽返回 None。"""
+    parts: list[str] = []
+    while True:
+        if interactive:
+            try:
+                line = input("你> " if not parts else "…> ")
+            except EOFError:
+                return ("\n".join(parts) or None), index
+        else:
+            if index >= len(lines or []):
+                return ("\n".join(parts) or None), index
+            line = lines[index]
+            index += 1
+        if not parts and line.strip() in END_COMMANDS:
+            return END_SENTINEL, index
+        if not line.strip():
+            return ("\n".join(parts) or ""), index
+        parts.append(line)
 
 
 def run_cli(cfg: dict, llm=None, user_inputs: list[str] | None = None) -> str:
@@ -93,25 +118,22 @@ def run_cli(cfg: dict, llm=None, user_inputs: list[str] | None = None) -> str:
     session.add_interviewer_message(opening_text)  # OPENING 状态不计题数
     print(opening_text)
     session.begin_questions()
+    print("提示：回答支持多行，粘贴后按一个空行回车提交；直接回车不提交；输入 结束/exit//end 结束面试。")
 
     lines = remaining
     index = 0
     while True:
         try:
-            if lines is None:
-                text = input("你> ")
-            else:
-                if index >= len(lines):
-                    break
-                text = lines[index]
-                index += 1
+            text, index = _read_answer(lines, index, lines is None)
         except KeyboardInterrupt:
             print("\n已中断面试，正在基于已记录内容生成评估报告…")
             session.to_wrapping()
             break
-        if text.strip() in END_COMMANDS:
+        if text is None or text == END_SENTINEL:
             session.to_wrapping()
             break
+        if not text.strip():
+            continue
         session.add_candidate_message(text)
         if needs_emergency_offload(session.messages, config.max_context_chars, config.context_safety_ratio):
             atomic_write(session.session_dir / "summary.md", "上下文保护：滑动窗口已压缩")

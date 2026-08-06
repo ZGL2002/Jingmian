@@ -39,6 +39,8 @@ class InterviewSession:
         self.state = SessionState.QUESTIONING
 
     def add_candidate_message(self, text: str) -> None:
+        if not text.strip():
+            return
         if len(text) > self.config.answer_offload_threshold:
             self._answer_index += 1
             path = offload_long_answer(self.session_dir, self._answer_index, text, self.config.user_id)

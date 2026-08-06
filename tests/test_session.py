@@ -27,6 +27,16 @@ def test_prompt_uses_configured_min_questions(tmp_path):
     prompt = (s.session_dir / "prompt.md").read_text(encoding="utf-8")
     assert "至少完成 3 题" in prompt
 
+def test_empty_candidate_message_ignored(tmp_path):
+    s = make_session(tmp_path)
+    s.start()
+    s.begin_questions()
+    s.add_candidate_message("")
+    s.add_candidate_message("   ")
+    entries = read_jsonl(s.transcript_path)
+    assert all(e["role"] != "candidate" for e in entries)
+    assert len(s.messages) == 1  # 只保留 system 消息
+
 def test_question_counting(tmp_path):
     s = make_session(tmp_path)
     s.start()
