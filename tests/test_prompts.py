@@ -34,3 +34,9 @@ def test_system_prompt_uses_min_questions():
     p = build_system_prompt(None, min_questions=5)
     assert "至少完成 5 题" in p
     assert "至少完成 20 题" not in p
+
+def test_system_prompt_enforces_one_question_per_turn():
+    p = build_system_prompt(None)
+    assert "每轮只输出一个提问" in p
+    assert "先问最关键" in p
+    assert "一次输出多个问题视为违规" in p
