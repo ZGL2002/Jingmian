@@ -1,6 +1,7 @@
 # Secrets
 .env
 .env.*
+!.env.example
 
 # Python
 __pycache__/
@@ -10,4 +11,3 @@ venv/
 
 # Interview records (user privacy)
 interviews/
-
