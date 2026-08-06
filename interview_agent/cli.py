@@ -61,7 +61,10 @@ def _read_resume(user_inputs: list[str] | None) -> tuple[str | None, list[str] |
 
 def run_cli(cfg: dict, llm=None, user_inputs: list[str] | None = None) -> str:
     raw, remaining = _read_resume(user_inputs)
-    resume = parse_resume(extract_text(raw)) if raw else None
+    try:
+        resume = parse_resume(extract_text(raw)) if raw else None
+    except ValueError as e:
+        raise SystemExit(f"错误：{e}") from None
     config = SessionConfig(
         user_id=_default_user_id(cfg),
         session_root=Path(cfg["session_root"]),

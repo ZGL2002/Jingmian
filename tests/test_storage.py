@@ -32,8 +32,11 @@ def test_init_transcript_meta(tmp_path):
 def test_offload_and_report(tmp_path):
     d = tmp_path / "s"
     d.mkdir()
-    a = offload_long_answer(d, 1, "长文")
+    a = offload_long_answer(d, 1, "长文", "alice")
     assert a.name == "answer_1.md"
-    assert a.read_text(encoding="utf-8") == "长文"
-    r = save_report(d, "# 报告")
+    a_text = a.read_text(encoding="utf-8")
+    assert a_text.startswith("<!-- owner: alice -->")
+    assert a_text.endswith("长文")
+    r = save_report(d, "# 报告", "alice")
     assert r.name == "report.md"
+    assert r.read_text(encoding="utf-8").startswith("<!-- owner: alice -->")

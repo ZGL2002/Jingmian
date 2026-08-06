@@ -2,12 +2,14 @@
 from __future__ import annotations
 from .base import Tool
 from ..storage import atomic_write
+from ..security import check_owner_if_marked
 
 
 def _read(args: dict, ctx) -> str:
     p = ctx.policy.resolve(args["path"])
     if not p.is_file():
         return f"错误：文件不存在 {args['path']}"
+    check_owner_if_marked(p, ctx.user_id)
     text = p.read_text(encoding="utf-8", errors="replace")
     if "max_chars" in args:
         text = text[: int(args["max_chars"])]
@@ -16,12 +18,14 @@ def _read(args: dict, ctx) -> str:
 
 def _write(args: dict, ctx) -> str:
     p = ctx.policy.resolve(args["path"])
+    check_owner_if_marked(p, ctx.user_id)
     atomic_write(p, args["content"])
     return f"已写入 {p.name}"
 
 
 def _append(args: dict, ctx) -> str:
     p = ctx.policy.resolve(args["path"])
+    check_owner_if_marked(p, ctx.user_id)
     with p.open("a", encoding="utf-8") as f:
         f.write(args["content"])
     return f"已追加 {p.name}"
@@ -29,6 +33,7 @@ def _append(args: dict, ctx) -> str:
 
 def _edit(args: dict, ctx) -> str:
     p = ctx.policy.resolve(args["path"])
+    check_owner_if_marked(p, ctx.user_id)
     text = p.read_text(encoding="utf-8")
     count = text.count(args["old_text"])
     if count != 1:

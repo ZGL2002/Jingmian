@@ -29,3 +29,8 @@ def test_evaluation_messages_include_transcript():
     msgs = build_evaluation_messages("interviewer: 你好\ncandidate: 你好")
     assert msgs[0]["role"] == "system"
     assert msgs[-1]["content"] == "interviewer: 你好\ncandidate: 你好"
+
+def test_system_prompt_uses_min_questions():
+    p = build_system_prompt(None, min_questions=5)
+    assert "至少完成 5 题" in p
+    assert "至少完成 20 题" not in p

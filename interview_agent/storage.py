@@ -26,6 +26,11 @@ def atomic_write(path: Path, content: str) -> None:
     tmp.replace(path)
 
 
+def write_owned(path: Path, user_id: str, content: str) -> None:
+    """写入带 owner 元数据首行的文件。"""
+    atomic_write(path, f"<!-- owner: {user_id} -->\n{content}")
+
+
 def append_jsonl(path: Path, entry: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as f:
@@ -42,15 +47,16 @@ def init_transcript(path: Path, user_id: str, session_id: str) -> None:
     append_jsonl(path, {"role": "meta", "user_id": user_id, "session_id": session_id})
 
 
-def offload_long_answer(session_dir: Path, index: int, text: str) -> Path:
+def offload_long_answer(session_dir: Path, index: int, text: str, user_id: str) -> Path:
     p = session_dir / "answers" / f"answer_{index}.md"
-    atomic_write(p, text)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    write_owned(p, user_id, text)
     return p
 
 
-def save_report(session_dir: Path, markdown: str) -> Path:
+def save_report(session_dir: Path, markdown: str, user_id: str) -> Path:
     p = session_dir / "report.md"
-    atomic_write(p, markdown)
+    write_owned(p, user_id, markdown)
     return p
 
 

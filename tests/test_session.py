@@ -17,7 +17,15 @@ def test_start_creates_files(tmp_path):
 def test_start_writes_resume_copy(tmp_path):
     s = make_session(tmp_path, ResumeDocument(raw_text="简历"))
     s.start()
-    assert (s.session_dir / "resume.md").read_text(encoding="utf-8") == "简历"
+    text = (s.session_dir / "resume.md").read_text(encoding="utf-8")
+    assert text.startswith("<!-- owner: alice -->")
+    assert text.endswith("简历")
+
+def test_prompt_uses_configured_min_questions(tmp_path):
+    s = make_session(tmp_path, min_questions=3)
+    s.start()
+    prompt = (s.session_dir / "prompt.md").read_text(encoding="utf-8")
+    assert "至少完成 3 题" in prompt
 
 def test_question_counting(tmp_path):
     s = make_session(tmp_path)

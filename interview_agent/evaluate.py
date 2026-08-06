@@ -17,4 +17,4 @@ def run_evaluation(session, llm):
     text = transcript_to_text(session)
     turn = llm.chat(build_evaluation_messages(text, session.config.language))
     md = build_report_markdown(session, turn.content or "评估未生成")
-    return save_report(session.session_dir, md)
+    return save_report(session.session_dir, md, session.config.user_id)

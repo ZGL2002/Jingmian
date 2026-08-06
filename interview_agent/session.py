@@ -3,8 +3,8 @@ from __future__ import annotations
 from .models import SessionConfig, SessionState, ResumeDocument
 from .prompts import build_system_prompt
 from .storage import (
-    atomic_write, append_jsonl, create_session_dir, init_transcript,
-    offload_long_answer, timestamp,
+    append_jsonl, create_session_dir, init_transcript, offload_long_answer,
+    timestamp, write_owned,
 )
 
 
@@ -26,10 +26,12 @@ class InterviewSession:
 
     def start(self) -> None:
         init_transcript(self.transcript_path, self.config.user_id, self.session_id)
-        prompt = build_system_prompt(self.resume, self.config.language)
-        atomic_write(self.session_dir / "prompt.md", prompt)
+        prompt = build_system_prompt(
+            self.resume, self.config.language, min_questions=self.config.min_questions
+        )
+        write_owned(self.session_dir / "prompt.md", self.config.user_id, prompt)
         if self.resume is not None:
-            atomic_write(self.session_dir / "resume.md", self.resume.raw_text)
+            write_owned(self.session_dir / "resume.md", self.config.user_id, self.resume.raw_text)
         self.messages = [{"role": "system", "content": prompt}]
         self.state = SessionState.OPENING
 
@@ -39,7 +41,7 @@ class InterviewSession:
     def add_candidate_message(self, text: str) -> None:
         if len(text) > self.config.answer_offload_threshold:
             self._answer_index += 1
-            path = offload_long_answer(self.session_dir, self._answer_index, text)
+            path = offload_long_answer(self.session_dir, self._answer_index, text, self.config.user_id)
             excerpt = text[:200]
             self.messages.append({
                 "role": "user",

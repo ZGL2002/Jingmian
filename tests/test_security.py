@@ -1,5 +1,8 @@
 import pytest
-from interview_agent.security import PathPolicy, PathPolicyError, read_owner, check_owner, contains_secret
+from interview_agent.security import (
+    PathPolicy, PathPolicyError, read_owner, check_owner,
+    check_owner_if_marked, contains_secret,
+)
 
 def test_resolve_inside_root(tmp_path):
     policy = PathPolicy([tmp_path])
@@ -36,6 +39,17 @@ def test_owner_mismatch_jsonl(tmp_path):
     f.write_text('{"user_id": "bob"}\n', encoding="utf-8")
     with pytest.raises(PathPolicyError):
         check_owner(f, "alice")
+
+def test_check_owner_if_marked_mismatch(tmp_path):
+    f = tmp_path / "t.md"
+    f.write_text("<!-- owner: bob -->\nbody", encoding="utf-8")
+    with pytest.raises(PathPolicyError):
+        check_owner_if_marked(f, "alice")
+
+def test_check_owner_if_marked_unmarked_allowed(tmp_path):
+    f = tmp_path / "scratch.txt"
+    f.write_text("hello", encoding="utf-8")
+    check_owner_if_marked(f, "alice")  # 无 owner 标记的草稿文件放行
 
 def test_contains_secret():
     assert contains_secret("key=sk-abc", "sk-abc")

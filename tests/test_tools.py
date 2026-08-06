@@ -72,3 +72,14 @@ def test_traversal_blocked(tmp_path):
     reg = default_registry()
     out = reg.execute("read_file", {"path": "../secret.txt"}, make_ctx(tmp_path))
     assert out.startswith("错误：")
+
+def test_read_owned_file_with_wrong_user(tmp_path):
+    reg = default_registry()
+    ctx = make_ctx(tmp_path)
+    reg.execute("write_file", {"path": "s/owned.md", "content": "<!-- owner: alice -->\nx"}, ctx)
+    other = ToolContext(
+        user_id="bob", session_dir=ctx.session_dir,
+        policy=ctx.policy, transcript_path=ctx.transcript_path,
+    )
+    out = reg.execute("read_file", {"path": "s/owned.md"}, other)
+    assert out.startswith("错误：")
