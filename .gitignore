@@ -11,3 +11,6 @@ venv/
 
 # Interview records (user privacy)
 interviews/
+
+# Brainstorming visual companion artifacts
+.superpowers/
