@@ -41,3 +41,11 @@ class SessionConfig:
     context_safety_ratio: float = 0.8
     max_context_chars: int = 60_000
     keep_recent_messages: int = 30
+
+
+@dataclass
+class ExperienceEntry:
+    entry_id: str
+    title: str
+    content: str
+    source: str = ""
