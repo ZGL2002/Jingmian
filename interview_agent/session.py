@@ -25,9 +25,21 @@ class InterviewSession:
         self._answer_index = 0
 
     def start(self) -> None:
-        init_transcript(self.transcript_path, self.config.user_id, self.session_id)
+        init_transcript(
+            self.transcript_path,
+            self.config.user_id,
+            self.session_id,
+            company=self.config.company,
+            position=self.config.position,
+        )
         prompt = build_system_prompt(
-            self.resume, self.config.language, min_questions=self.config.min_questions
+            self.resume,
+            self.config.language,
+            min_questions=self.config.min_questions,
+            company=self.config.company,
+            position=self.config.position,
+            jd_text=self.config.jd_text or None,
+            experience_refs=self.config.experience_refs,
         )
         write_owned(self.session_dir / "prompt.md", self.config.user_id, prompt)
         if self.resume is not None:

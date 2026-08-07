@@ -41,6 +41,10 @@ class SessionConfig:
     context_safety_ratio: float = 0.8
     max_context_chars: int = 60_000
     keep_recent_messages: int = 30
+    company: str = ""
+    position: str = ""
+    jd_text: str = ""
+    experience_refs: list[ExperienceEntry] = field(default_factory=list)
 
 
 @dataclass
@@ -49,3 +53,6 @@ class ExperienceEntry:
     title: str
     content: str
     source: str = ""
+    company: str = ""
+    position: str = ""
+    created_at: str = ""

@@ -43,8 +43,38 @@ def read_jsonl(path: Path) -> list[dict]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
-def init_transcript(path: Path, user_id: str, session_id: str) -> None:
-    append_jsonl(path, {"role": "meta", "user_id": user_id, "session_id": session_id})
+def init_transcript(path: Path, user_id: str, session_id: str, company: str = "", position: str = "") -> None:
+    entry = {"role": "meta", "user_id": user_id, "session_id": session_id}
+    if company:
+        entry["company"] = company
+    if position:
+        entry["position"] = position
+    append_jsonl(path, entry)
+
+
+def list_sessions(user_root: Path, user_id: str) -> list[dict]:
+    """列出用户命名空间下的面试记录（按会话目录名倒序）。"""
+    root = user_root / user_id
+    if not root.is_dir():
+        return []
+    out: list[dict] = []
+    for d in sorted(root.iterdir(), key=lambda p: p.name, reverse=True):
+        if not d.is_dir():
+            continue
+        transcript = d / "transcript.jsonl"
+        if not transcript.exists():
+            continue
+        entries = read_jsonl(transcript)
+        meta = next((e for e in entries if e.get("role") == "meta"), {})
+        out.append({
+            "session_id": d.name,
+            "company": meta.get("company", ""),
+            "position": meta.get("position", ""),
+            "question_count": sum(1 for e in entries if e.get("role") == "interviewer"),
+            "has_report": (d / "report.md").exists(),
+            "created_at": d.name[:19],
+        })
+    return out
 
 
 def offload_long_answer(session_dir: Path, index: int, text: str, user_id: str) -> Path:
