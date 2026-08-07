@@ -35,3 +35,15 @@ python -m interview_agent
 - API key 只从环境变量/`.env` 读取，永不写入任何记录文件。
 - 工具只能访问本场会话目录（`interviews/<user_id>/...`），路径校验 + 符号链接解析，无法越界。
 - 没有 shell / 任意命令执行工具。
+
+## Web 界面
+
+```bash
+python -m pip install -e ".[dev]"
+# .env 中配置 DEEPSEEK_API_KEY 与 INTERVIEW_WEB_TOKEN 后：
+python -m interview_agent.web
+```
+
+浏览器访问 `http://<服务器IP>:8765`，输入 `INTERVIEW_WEB_TOKEN` 登录。
+支持：目标公司/岗位、简历粘贴或上传、JD、面经参考（直接粘贴或从面经库勾选）、
+流式问答、一人多场并行、历史列表与报告回看、本地面经库管理。
