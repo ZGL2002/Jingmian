@@ -22,8 +22,18 @@ class AssistantTurn:
     tool_calls: list[ToolCall] = field(default_factory=list)
 
 
+@dataclass
+class StreamEnd:
+    """流式输出的收尾标记，携带完整 AssistantTurn。"""
+    turn: AssistantTurn
+
+
 class LLMClient:
     def chat(self, messages: list[dict], tools: list[dict] | None = None, max_tokens: int | None = None) -> AssistantTurn:
+        raise NotImplementedError
+
+    def chat_stream(self, messages: list[dict], tools: list[dict] | None = None, max_tokens: int | None = None):
+        """逐段产出 str 文本增量；最后一个元素是 StreamEnd。"""
         raise NotImplementedError
 
 
@@ -49,3 +59,45 @@ class DeepSeekClient(LLMClient):
             for t in (msg.tool_calls or [])
         ]
         return AssistantTurn(content=msg.content, tool_calls=tool_calls)
+
+    def chat_stream(self, messages: list[dict], tools: list[dict] | None = None, max_tokens: int | None = None):
+        kwargs: dict = {"model": self._model, "messages": messages, "stream": True}
+        if tools:
+            kwargs["tools"] = tools
+        if max_tokens:
+            kwargs["max_tokens"] = max_tokens
+        try:
+            stream = self._client.chat.completions.create(**kwargs)
+            content_parts: list[str] = []
+            tool_acc: dict[int, dict] = {}
+            for chunk in stream:
+                if not chunk.choices:
+                    continue
+                delta = chunk.choices[0].delta
+                if delta.content:
+                    content_parts.append(delta.content)
+                    yield delta.content
+                for tc in (delta.tool_calls or []):
+                    acc = tool_acc.setdefault(tc.index, {"id": tc.id or "", "name": "", "arguments": ""})
+                    if tc.id:
+                        acc["id"] = tc.id
+                    if tc.function and tc.function.name:
+                        acc["name"] = tc.function.name
+                    if tc.function and tc.function.arguments:
+                        acc["arguments"] += tc.function.arguments
+            tool_calls = []
+            for idx in sorted(tool_acc):
+                acc = tool_acc[idx]
+                tool_calls.append(ToolCall(
+                    id=acc["id"],
+                    name=acc["name"],
+                    arguments=json.loads(acc["arguments"] or "{}"),
+                ))
+            yield StreamEnd(AssistantTurn(
+                content="".join(content_parts) or None,
+                tool_calls=tool_calls,
+            ))
+        except AuthenticationError:
+            raise LLMError("DeepSeek API key 无效或未授权") from None
+        except Exception as e:  # noqa: BLE001 - 统一包装为 LLMError 由上层重试/提示
+            raise LLMError(f"DeepSeek 调用失败: {e}") from None
