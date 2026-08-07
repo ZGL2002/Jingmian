@@ -101,3 +101,10 @@ class DeepSeekClient(LLMClient):
             raise LLMError("DeepSeek API key 无效或未授权") from None
         except Exception as e:  # noqa: BLE001 - 统一包装为 LLMError 由上层重试/提示
             raise LLMError(f"DeepSeek 调用失败: {e}") from None
+
+
+def create_llm(api_key: str, model: str = "deepseek-chat", provider: str = "deepseek") -> LLMClient:
+    """LLM 客户端工厂：未来多用户 BYOK 只改这里传入的 api_key 来源。"""
+    if provider == "deepseek":
+        return DeepSeekClient(api_key=api_key, model=model)
+    raise ValueError(f"不支持的 provider: {provider}")
