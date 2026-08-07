@@ -70,6 +70,11 @@ class EventQueue:
         with self._cond:
             return self._counter
 
+    def events_after(self, last_seq: int) -> list[tuple[int, dict]]:
+        """非阻塞返回 seq > last_seq 的事件列表。"""
+        with self._cond:
+            return [(s, ev) for s, ev in zip(self._seqs, self._events) if s > last_seq]
+
     def wait_for_events_after(self, last_seq: int, timeout: float = 30.0) -> list[tuple[int, dict]]:
         """阻塞直到出现 seq > last_seq 的事件；返回 [(seq, event), ...]。"""
         with self._cond:
@@ -96,18 +101,19 @@ def sse_stream(queue: EventQueue, stop_when=None):
 
 
 async def sse_stream_async(queue: EventQueue, stop_when=None, last_id: int = 0):
-    """异步版 SSE 流：阻塞等待在独立线程执行，不阻塞事件循环。
+    """异步版 SSE 流：短间隔轮询，不阻塞事件循环。
 
-    同步版的 wait_for_events 会阻塞调用线程；直接用在 FastAPI 的
-    StreamingResponse 里会冻结整个事件循环，导致其他请求全部排队。
+    采用短间隔轮询，不使用线程：既不会阻塞事件循环，也不会在
+    Ctrl+C 关停时因线程池残留导致进程无法退出。
     last_id: 客户端已收到的最大事件序号；重连时只补发之后的事件。
     """
     seq = last_id
     while True:
-        items = await asyncio.to_thread(queue.wait_for_events_after, seq, 30.0)
+        items = queue.events_after(seq)
         for s, ev in items:
             seq = s
             if stop_when is not None and stop_when(ev):
                 yield sse_format(ev, seq)
                 return
             yield sse_format(ev, seq)
+        await asyncio.sleep(0.2)

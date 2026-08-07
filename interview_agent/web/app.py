@@ -1,5 +1,6 @@
 """FastAPI 应用：路由、口令、SSE、历史、报告、面经库。"""
 from __future__ import annotations
+import asyncio
 import re
 import uuid
 from pathlib import Path
@@ -140,13 +141,17 @@ def create_app(config: dict, llm=None) -> FastAPI:
                 last_id = 0
 
         async def gen():
-            yield sse_format(manager.snapshot_event(WEB_USER_ID, session_id))
-            async for ev in sse_stream_async(
-                task.queue,
-                stop_when=lambda e: e.get("type") == "status" and e.get("status") == "done",
-                last_id=last_id,
-            ):
-                yield ev
+            try:
+                yield sse_format(manager.snapshot_event(WEB_USER_ID, session_id))
+                async for ev in sse_stream_async(
+                    task.queue,
+                    stop_when=lambda e: e.get("type") == "status" and e.get("status") == "done",
+                    last_id=last_id,
+                ):
+                    yield ev
+            except asyncio.CancelledError:
+                # 服务关停时取消 SSE 任务属于正常流程，静默退出
+                return
 
         return StreamingResponse(gen(), media_type="text/event-stream")
 
