@@ -15,7 +15,7 @@ from ..resume import extract_text
 from ..security import check_owner
 from ..storage import list_sessions, read_jsonl, timestamp
 from .auth import TokenAuthMiddleware, AUTH_COOKIE, token_matches
-from .events import sse_format, sse_stream
+from .events import sse_format, sse_stream_async
 from .manager import SessionManager
 
 WEB_USER_ID = "local"
@@ -135,7 +135,7 @@ def create_app(config: dict, llm=None) -> FastAPI:
 
         async def gen():
             yield sse_format(manager.snapshot_event(WEB_USER_ID, session_id))
-            for ev in sse_stream(
+            async for ev in sse_stream_async(
                 task.queue,
                 stop_when=lambda e: e.get("type") == "status" and e.get("status") == "done",
             ):

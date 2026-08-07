@@ -1,5 +1,6 @@
 """SSE 事件协议与线程安全可重放队列。"""
 from __future__ import annotations
+import asyncio
 import json
 import threading
 
@@ -66,6 +67,23 @@ def sse_stream(queue: EventQueue, stop_when=None):
     idx = 0
     while True:
         events = queue.wait_for_events(idx, timeout=30.0)
+        for ev in events[idx:]:
+            idx += 1
+            if stop_when is not None and stop_when(ev):
+                yield sse_format(ev)
+                return
+            yield sse_format(ev)
+
+
+async def sse_stream_async(queue: EventQueue, stop_when=None):
+    """异步版 SSE 流：阻塞等待在独立线程执行，不阻塞事件循环。
+
+    同步版的 wait_for_events 会阻塞调用线程；直接用在 FastAPI 的
+    StreamingResponse 里会冻结整个事件循环，导致其他请求全部排队。
+    """
+    idx = 0
+    while True:
+        events = await asyncio.to_thread(queue.wait_for_events, idx, 30.0)
         for ev in events[idx:]:
             idx += 1
             if stop_when is not None and stop_when(ev):
