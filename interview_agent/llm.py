@@ -74,6 +74,8 @@ class DeepSeekClient(LLMClient):
                 if not chunk.choices:
                     continue
                 delta = chunk.choices[0].delta
+                if delta is None:
+                    continue
                 if delta.content:
                     content_parts.append(delta.content)
                     yield delta.content
