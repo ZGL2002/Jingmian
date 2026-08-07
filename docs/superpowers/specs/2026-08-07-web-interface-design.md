@@ -21,10 +21,10 @@ CLI 版面试 Agent 已具备多轮追问、自然结束、评估报告等基础
 ### 本版包含
 
 - FastAPI + SSE + 原生 JS 单页（无前端构建工具链）。
-- 面试配置区：目标公司（可选）、简历（粘贴/上传 `.txt`/`.md`/`.pdf`，支持无简历模式）、JD（可选，作为出题输入）、面经参考（库内勾选或直接粘贴，粘贴自动入库并用于本场）。
+- 面试配置区：目标公司（可选）、岗位名称（可选，如"后端开发" / "客户端开发"）、简历（粘贴/上传 `.txt`/`.md`/`.pdf`，支持无简历模式）、JD（可选，作为出题输入）、面经参考（库内勾选或直接粘贴，粘贴自动入库并用于本场）。
 - 流式打字效果：SSE 事件协议（状态 / 增量文字 / 回合结束 / 错误 / 快照），未来语音/视频复用同一协议。
-- 本地面经库：按用户隔离，条目带可选"来源/公司"标签；支持新增/列表/查看/删除。
-- 简单历史列表：时间 / 目标公司 / 题数 / 是否有报告；可查看对话回放与报告（报告服务端渲染 HTML）。
+- 本地面经库：按用户隔离，条目带可选"来源 / 公司 / 岗位"标签；支持新增/列表/查看/删除。
+- 简单历史列表：时间 / 目标公司 / 岗位名称 / 题数 / 是否有报告；可查看对话回放与报告（报告服务端渲染 HTML）。
 - 一人可同时多场面试（`user_id → {session_id: 活跃面试}` 注册表），未来多人多场仅需接认证。
 - 访问口令：`INTERVIEW_WEB_TOKEN`（环境变量），登录后 HttpOnly cookie，常量时间比较。
 - API key：第一版服务器统一密钥（沿用 `.env`），LLM 创建收敛到工厂函数，为未来"用户自带密钥"预留单一改动点。
@@ -46,9 +46,9 @@ CLI 版面试 Agent 已具备多轮追问、自然结束、评估报告等基础
 | 用户 | 单人起步（固定 user_id），接口预留多用户 |
 | 并发 | 一人可同时多场；未来多人同时多场 |
 | 回复方式 | SSE 流式打字；事件协议为语音/视频预留 |
-| 出题输入 | 简历（必填或空）+ JD（可选）+ 目标公司（可选）+ 面经参考（可选） |
-| 面经 | v1 用户粘贴入库；未来 MCP 抓取 + 目标公司精准拉取 |
-| 历史 | 简单列表，标注目标公司；报告可回看 |
+| 出题输入 | 简历（必填或空）+ JD（可选）+ 目标公司（可选）+ 岗位名称（可选）+ 面经参考（可选） |
+| 面经 | v1 用户粘贴入库（条目带可选 来源/公司/岗位 标签）；未来 MCP 抓取 + 按公司/岗位精准拉取 |
+| 历史 | 简单列表，标注目标公司与岗位；报告可回看；未来语音回放 |
 | 访问 | 局域网直连（0.0.0.0）+ 简单访问口令 |
 | 密钥 | v1 服务器统一密钥 + `create_llm` 工厂钩子；未来混合模式（平台 key + 用户 BYOK） |
 | 技术栈 | FastAPI + uvicorn + SSE + 原生 JS 单页 |
@@ -94,7 +94,7 @@ Agent 核心：ToolAgent / InterviewSession / 工具注册表 / 简历解析 / �
 
 1. **`llm.py`**：`LLMClient` 增加 `chat_stream(messages, tools, max_tokens)` 流式接口；`DeepSeekClient` 用 OpenAI 兼容 `stream=True` 实现。
 2. **`agent.py`**：`run_turn` 增加可选 `on_delta` 回调；工具调用轮次不展示内容（实践上为空），最终回答逐 token 推送；保留 `_strip_role_leak` 串台防御（流式模式下浏览器以最终事件为准修正）。
-3. **`prompts.py`**：`build_system_prompt` 增加可选段：目标公司上下文、JD 要求、面经参考（高频题提示）；"简历深挖优先 / 至少一道场景题 / 单问硬规则"等既有约束不变。
+3. **`prompts.py`**：`build_system_prompt` 增加可选段：目标公司 + 岗位名称上下文（后端 / 客户端等岗位差异出题）、JD 要求、面经参考（高频题提示）；"简历深挖优先 / 至少一道场景题 / 单问硬规则"等既有约束不变。
 4. **`models.py`**：新增 `ExperienceEntry`（标题 / 内容 / 来源公司标签 / 创建时间）；`SessionConfig` 增加 `company`、`jd_text`、`experience_refs` 等字段。
 5. **`llm` 创建收敛**：新增 `create_llm(provider, model, api_key)` 工厂函数（默认 DeepSeek），`runner.py` 创建会话时统一走工厂；未来多用户 BYOK 只改 key 来源。
 
@@ -116,10 +116,10 @@ Agent 核心：ToolAgent / InterviewSession / 工具注册表 / 简历解析 / �
 ```
 interviews/<user_id>/
   ├─ experiences/                      # 面经库（本版新增，按用户隔离）
-  │   ├─ <experience_id>.md            # 标题行 + 来源/公司标签 + 内容（owner 元数据）
+  │   ├─ <experience_id>.md            # 标题行 + 来源/公司/岗位标签 + 内容（owner 元数据）
   │   └─ ...
   └─ <session_id>/                     # 每场面试
-      ├─ meta 信息（扩展 transcript 首行 role=meta：company / 是否有简历 / JD / 面经数）
+      ├─ meta 信息（扩展 transcript 首行 role=meta：company / position / 是否有简历 / JD / 面经数）
       ├─ jd.md                         # JD 副本（可选，本版新增）
       ├─ references/                   # 本场勾选/粘贴的面经快照（本版新增）
       ├─ resume.md / prompt.md / transcript.jsonl / answers/ / report.md  # 沿用
@@ -138,7 +138,7 @@ interviews/<user_id>/
 | POST | `/api/logout` | 清除 cookie |
 | GET | `/` | 主页面（单页应用） |
 | GET | `/api/session?session_id=` | 会话状态快照（state / 题数 / 最近消息 / busy） |
-| POST | `/api/session/start` | 建会话（company / resume 文本或文件 / jd / experience_ids / experience_text） |
+| POST | `/api/session/start` | 建会话（company / position / resume 文本或文件 / jd / experience_ids / experience_text） |
 | POST | `/api/answer?session_id=` | 提交回答，触发回合 |
 | POST | `/api/end?session_id=` | 主动结束并评估 |
 | GET | `/api/stream?session_id=` | SSE 事件流（重连先重放） |
@@ -171,7 +171,7 @@ interviews/<user_id>/
 
 ## 10. 安全设计
 
-- **访问口令**：`INTERVIEW_WEB_TOKEN` 必填（缺失启动报错）；`hmac.compare_digest` 比较；cookie 设 HttpOnly；未登录一律拦截。
+- **访问口令**：v1 单人，`INTERVIEW_WEB_TOKEN` 必填（缺失启动报错），由管理员配置并直接告知使用者；`hmac.compare_digest` 比较；cookie 设 HttpOnly；未登录一律拦截。未来多用户时改为用户凭据（用户名/密码、邀请码或对接内部 SSO），认证层产出 `user_id` 后接入现有 SessionManager，口令中间件替换为认证中间件。
 - **API key**：只存在于服务器 `.env` / 环境变量，页面不提供 key 输入，任何记录/日志/报告不含 key；`create_llm` 工厂为未来 BYOK 预留单一改动点（届时密钥加密存储、按用户隔离、永不回显）。
 - **存储隔离**：沿用 owner 元数据 + 路径强校验；面经库与面试记录同属用户命名空间，跨用户访问拒绝。
 - **工具面**：沿用现有白名单（仅文件工具，无 shell / 任意命令执行）。
@@ -209,11 +209,12 @@ INTERVIEW_SESSION_IDLE_TIMEOUT=1800 # 新增，可选：会话空闲回收秒数
 ## 14. 未来扩展点（仅预留，不实现）
 
 1. **飞书适配器**：同一事件协议 → 飞书消息推送/回调。
-2. **语音 / 视频**：TTS/ASR 渲染器 + WebRTC 媒体层，Agent 核心不变。
-3. **MCP 抓取面经**：复用面经条目的来源/公司标签与"目标公司"输入，按公司精准拉取入库。
+2. **语音 / 视频**：TTS/ASR 渲染器 + WebRTC 媒体层，Agent 核心不变；录音文件按会话落盘，历史列表增加"语音回放"入口，与文字回看并列。
+3. **MCP 抓取面经**：复用面经条目的来源/公司/岗位标签与"目标公司 + 岗位名称"输入，按公司 + 岗位精准拉取入库。
 4. **多人多场 + 混合密钥**：认证接 `user_id`；`create_llm` 工厂 + 用户密钥加密存储（BYOK 覆盖平台 key）。
 5. **历史管理增强**：搜索 / 删除 / 重命名 / 导出。
 6. **报告增强**：对比多场同公司面试的进步曲线（依赖跨场记忆，另行设计）。
+7. **存储与缓存演进**：`storage.py` 保持接口抽象；仅当出现多实例部署或规模化/检索需求时，再引入 Redis（SSE 跨实例广播、限流）与 MySQL（跨用户检索、报表）；v1 与可预见阶段保持文件存储。
 
 ## 15. 依赖变更
 
