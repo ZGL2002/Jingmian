@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from .tools import ToolRegistry
 from .tools.base import ToolContext
 from .session import InterviewSession
-from .llm import LLMClient, LLMError
+from .llm import LLMClient, LLMError, StreamEnd
 
 INTERVIEW_TURN_MAX_TOKENS = 1000
 
@@ -51,15 +51,47 @@ class ToolAgent:
         assert last_error is not None
         raise last_error
 
-    def run_turn(self) -> AgentTurnResult:
+    def _chat_stream_turn(
+        self,
+        messages: list[dict],
+        tools: list[dict] | None = None,
+        max_tokens: int | None = None,
+        on_delta=None,
+    ) -> AssistantTurn:
+        last_error: LLMError | None = None
+        for attempt in range(3):
+            try:
+                turn: AssistantTurn | None = None
+                for chunk in self.llm.chat_stream(messages, tools=tools, max_tokens=max_tokens):
+                    if isinstance(chunk, StreamEnd):
+                        turn = chunk.turn
+                    elif on_delta is not None:
+                        on_delta(chunk)
+                assert turn is not None
+                return turn
+            except LLMError as e:
+                last_error = e
+                time.sleep(0.5 * (2 ** attempt))
+        assert last_error is not None
+        raise last_error
+
+    def run_turn(self, on_delta=None) -> AgentTurnResult:
         wrap_requested = False
         failed = 0
         for _ in range(self.max_iterations):
-            turn = self._chat(
-                self.session.messages,
-                tools=self.registry.schemas(),
-                max_tokens=INTERVIEW_TURN_MAX_TOKENS,
-            )
+            if on_delta is None:
+                turn = self._chat(
+                    self.session.messages,
+                    tools=self.registry.schemas(),
+                    max_tokens=INTERVIEW_TURN_MAX_TOKENS,
+                )
+            else:
+                turn = self._chat_stream_turn(
+                    self.session.messages,
+                    tools=self.registry.schemas(),
+                    max_tokens=INTERVIEW_TURN_MAX_TOKENS,
+                    on_delta=on_delta,
+                )
             if not turn.tool_calls:
                 content = _strip_role_leak(turn.content or "")
                 self.session.add_interviewer_message(content)
@@ -91,7 +123,12 @@ class ToolAgent:
                     "content": "工具连续失败 3 次：请停止调用工具，直接用文字继续面试。",
                 })
                 break
-        turn = self._chat(self.session.messages, max_tokens=INTERVIEW_TURN_MAX_TOKENS)
+        if on_delta is None:
+            turn = self._chat(self.session.messages, max_tokens=INTERVIEW_TURN_MAX_TOKENS)
+        else:
+            turn = self._chat_stream_turn(
+                self.session.messages, max_tokens=INTERVIEW_TURN_MAX_TOKENS, on_delta=on_delta
+            )
         content = _strip_role_leak(turn.content or "")
         self.session.add_interviewer_message(content)
         return AgentTurnResult(content=content, wrap_requested=wrap_requested)
