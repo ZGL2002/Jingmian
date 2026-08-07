@@ -58,11 +58,17 @@ class EventQueue:
             return list(self._events)
 
 
-def sse_stream(queue: EventQueue):
-    """把事件队列转成 SSE 文本流；不主动终止，客户端关闭即停止。"""
+def sse_stream(queue: EventQueue, stop_when=None):
+    """把事件队列转成 SSE 文本流；默认不主动终止，客户端关闭即停止。
+
+    stop_when: 可选谓词，接收事件 dict；命中时先发出该事件再结束流。
+    """
     idx = 0
     while True:
         events = queue.wait_for_events(idx, timeout=30.0)
         for ev in events[idx:]:
             idx += 1
+            if stop_when is not None and stop_when(ev):
+                yield sse_format(ev)
+                return
             yield sse_format(ev)

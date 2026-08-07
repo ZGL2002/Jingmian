@@ -1,7 +1,7 @@
 import json
 import threading
 from interview_agent.web.events import (
-    EventQueue, delta_event, turn_end_event, snapshot_event, sse_format,
+    EventQueue, delta_event, turn_end_event, snapshot_event, sse_format, sse_stream, status_event,
 )
 
 
@@ -35,3 +35,12 @@ def test_sse_format_and_snapshot_event():
     assert ev["type"] == "snapshot"
     assert ev["state"] == "questioning"
     assert json.loads(sse_format(ev)[6:])["busy"] is False
+
+
+def test_sse_stream_stops_on_done():
+    q = EventQueue()
+    q.publish(delta_event("a"))
+    q.publish(status_event("done"))
+    frames = list(sse_stream(q, stop_when=lambda e: e.get("status") == "done"))
+    assert len(frames) == 2
+    assert frames[-1] == sse_format(status_event("done"))
