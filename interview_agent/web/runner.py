@@ -4,6 +4,7 @@ import queue as _queue
 import threading
 import time
 from ..agent import ToolAgent, _strip_role_leak
+from ..context import build_sliding_window, needs_emergency_offload
 from ..evaluate import run_evaluation
 from ..models import SessionState
 from ..session import InterviewSession
@@ -70,6 +71,15 @@ class InterviewTask:
                 if item[0] == "end":
                     break
                 self.session.add_candidate_message(item[1])
+                cfg = self.session.config
+                if needs_emergency_offload(
+                    self.session.messages, cfg.max_context_chars, cfg.context_safety_ratio
+                ):
+                    self.session.messages = build_sliding_window(
+                        self.session.messages,
+                        cfg.keep_recent_messages,
+                        "（上下文保护压缩）",
+                    )
                 self.queue.publish(status_event("thinking"))
                 result = self.agent.run_turn(
                     on_delta=lambda t: self.queue.publish(delta_event(t))

@@ -7,7 +7,7 @@ def test_load_config_defaults(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     cfg = load_config(str(env))
     assert cfg["api_key"] == "sk-test"
-    assert cfg["min_questions"] == 20
+    assert cfg["min_questions"] == 10
     assert cfg["model"] == "deepseek-chat"
     assert cfg["language"] == "zh"
     assert cfg["answer_offload_threshold"] == 100_000

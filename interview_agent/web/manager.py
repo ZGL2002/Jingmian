@@ -89,6 +89,7 @@ class SessionManager:
             "state": task.session.state.value,
             "question_count": task.session.question_count,
             "busy": task.busy,
+            "last_seq": task.queue.last_seq(),
         }
 
     def snapshot_event(self, user_id: str, session_id: str) -> dict:

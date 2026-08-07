@@ -29,8 +29,11 @@ def snapshot_event(snapshot: dict) -> dict:
     return {"type": "snapshot", **snapshot}
 
 
-def sse_format(event: dict) -> str:
-    return f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+def sse_format(event: dict, seq: int | None = None) -> str:
+    body = f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+    if seq is not None:
+        return f"id: {seq}\n{body}"
+    return body
 
 
 class EventQueue:
@@ -38,14 +41,19 @@ class EventQueue:
 
     def __init__(self, max_len: int = 500):
         self._events: list[dict] = []
+        self._seqs: list[int] = []
+        self._counter = 0
         self._cond = threading.Condition()
         self._max_len = max_len
 
     def publish(self, event: dict) -> None:
         with self._cond:
+            self._counter += 1
             self._events.append(event)
+            self._seqs.append(self._counter)
             if len(self._events) > self._max_len:
-                del self._events[: len(self._events) - self._max_len]
+                del self._events[0]
+                del self._seqs[0]
             self._cond.notify_all()
 
     def snapshot(self) -> list[dict]:
@@ -57,6 +65,18 @@ class EventQueue:
             if len(self._events) <= after:
                 self._cond.wait(timeout)
             return list(self._events)
+
+    def last_seq(self) -> int:
+        with self._cond:
+            return self._counter
+
+    def wait_for_events_after(self, last_seq: int, timeout: float = 30.0) -> list[tuple[int, dict]]:
+        """阻塞直到出现 seq > last_seq 的事件；返回 [(seq, event), ...]。"""
+        with self._cond:
+            while self._counter <= last_seq:
+                if not self._cond.wait(timeout):
+                    break
+            return [(s, ev) for s, ev in zip(self._seqs, self._events) if s > last_seq]
 
 
 def sse_stream(queue: EventQueue, stop_when=None):
@@ -75,18 +95,19 @@ def sse_stream(queue: EventQueue, stop_when=None):
             yield sse_format(ev)
 
 
-async def sse_stream_async(queue: EventQueue, stop_when=None):
+async def sse_stream_async(queue: EventQueue, stop_when=None, last_id: int = 0):
     """异步版 SSE 流：阻塞等待在独立线程执行，不阻塞事件循环。
 
     同步版的 wait_for_events 会阻塞调用线程；直接用在 FastAPI 的
     StreamingResponse 里会冻结整个事件循环，导致其他请求全部排队。
+    last_id: 客户端已收到的最大事件序号；重连时只补发之后的事件。
     """
-    idx = 0
+    seq = last_id
     while True:
-        events = await asyncio.to_thread(queue.wait_for_events, idx, 30.0)
-        for ev in events[idx:]:
-            idx += 1
+        items = await asyncio.to_thread(queue.wait_for_events_after, seq, 30.0)
+        for s, ev in items:
+            seq = s
             if stop_when is not None and stop_when(ev):
-                yield sse_format(ev)
+                yield sse_format(ev, seq)
                 return
-            yield sse_format(ev)
+            yield sse_format(ev, seq)

@@ -21,7 +21,7 @@ def render_resume_section(resume: ResumeDocument) -> str:
 def build_system_prompt(
     resume: ResumeDocument | None,
     language: str = "zh",
-    min_questions: int = 20,
+    min_questions: int = 10,
     company: str = "",
     position: str = "",
     jd_text: str | None = None,

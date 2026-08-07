@@ -3,7 +3,7 @@ from interview_agent.models import ResumeDocument, ResumeProject
 
 def test_system_prompt_mentions_rules():
     p = build_system_prompt(None)
-    assert "20" in p
+    assert "10" in p
     assert "场景题" in p
     assert "request_wrap" in p
     assert "数据" in p

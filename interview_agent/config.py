@@ -9,7 +9,7 @@ def load_config(env_path: str | None = None) -> dict:
     return {
         "api_key": os.environ.get("DEEPSEEK_API_KEY", ""),
         "model": os.environ.get("INTERVIEW_MODEL", "deepseek-chat"),
-        "min_questions": int(os.environ.get("INTERVIEW_MIN_QUESTIONS", "20")),
+        "min_questions": int(os.environ.get("INTERVIEW_MIN_QUESTIONS", "10")),
         "language": os.environ.get("INTERVIEW_LANG", "zh"),
         "answer_offload_threshold": int(
             os.environ.get("INTERVIEW_ANSWER_OFFLOAD_THRESHOLD", "100000")

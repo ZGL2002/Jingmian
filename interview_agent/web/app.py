@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 import uuid
 from pathlib import Path
-from fastapi import FastAPI, Form, HTTPException, UploadFile, File
+from fastapi import FastAPI, Form, HTTPException, Request, UploadFile, File
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 import markdown
@@ -128,16 +128,23 @@ def create_app(config: dict, llm=None) -> FastAPI:
         return manager.snapshot(WEB_USER_ID, session_id)
 
     @app.get("/api/stream")
-    def stream(session_id: str):
+    def stream(session_id: str, request: Request, last_id: int = 0):
         task = manager.get_task(WEB_USER_ID, session_id)
         if task is None:
             raise HTTPException(404, "会话不存在")
+        header_id = request.headers.get("last-event-id", "")
+        if header_id:
+            try:
+                last_id = int(header_id)
+            except ValueError:
+                last_id = 0
 
         async def gen():
             yield sse_format(manager.snapshot_event(WEB_USER_ID, session_id))
             async for ev in sse_stream_async(
                 task.queue,
                 stop_when=lambda e: e.get("type") == "status" and e.get("status") == "done",
+                last_id=last_id,
             ):
                 yield ev
 

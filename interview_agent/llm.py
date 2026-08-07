@@ -39,7 +39,11 @@ class LLMClient:
 
 class DeepSeekClient(LLMClient):
     def __init__(self, api_key: str, model: str = "deepseek-chat"):
-        self._client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
+        self._client = OpenAI(
+            api_key=api_key,
+            base_url="https://api.deepseek.com",
+            timeout=60.0,
+        )
         self._model = model
 
     def chat(self, messages: list[dict], tools: list[dict] | None = None, max_tokens: int | None = None) -> AssistantTurn:

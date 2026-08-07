@@ -60,7 +60,8 @@ def test_sse_stream_async_yields_and_terminates():
         return out
 
     frames = asyncio.run(collect())
-    assert [json.loads(f[6:]) for f in frames] == [
+    parsed = [json.loads(f.split("data: ", 1)[1]) for f in frames]
+    assert parsed == [
         {"type": "delta", "text": "a"},
         {"type": "status", "status": "done"},
     ]
@@ -95,3 +96,37 @@ def test_sse_stream_async_wait_does_not_block_event_loop():
     frames, ticks = asyncio.run(main())
     assert len(frames) == 1
     assert ticks >= 3, "事件循环在 SSE 等待期间被阻塞"
+
+
+def test_event_seq_and_wait_after():
+    q = EventQueue()
+    q.publish(delta_event("a"))  # seq 1
+    q.publish(delta_event("b"))  # seq 2
+    assert q.last_seq() == 2
+    assert [s for s, _ in q.wait_for_events_after(1, timeout=0.2)] == [2]
+    assert q.wait_for_events_after(2, timeout=0.2) == []
+
+
+def test_sse_format_with_id():
+    assert sse_format({"type": "x"}, seq=3) == 'id: 3\ndata: {"type": "x"}\n\n'
+
+
+def test_sse_stream_async_resumes_from_last_id():
+    q = EventQueue()
+    q.publish(delta_event("a"))  # seq 1（旧）
+    q.publish(delta_event("b"))  # seq 2（补发）
+    q.publish(status_event("done"))  # seq 3
+
+    async def collect():
+        out = []
+        async for f in sse_stream_async(
+            q, stop_when=lambda e: e.get("status") == "done", last_id=1
+        ):
+            out.append(f)
+        return out
+
+    frames = asyncio.run(collect())
+    assert len(frames) == 2
+    assert frames[0].startswith("id: 2\n")
+    assert json.loads(frames[0].split("data: ", 1)[1])["type"] == "delta"
+    assert json.loads(frames[1].split("data: ", 1)[1])["type"] == "status"

@@ -3,6 +3,7 @@ let currentSessionId = null;
 let pendingBox = null;
 let pendingBuf = "";
 let es = null;
+let thinkingSince = null;
 
 async function api(path, options) {
   const resp = await fetch(path, options);
@@ -30,33 +31,89 @@ function addChat(role, text) {
   return box;
 }
 
-function showThinking(on) { $("thinking").classList.toggle("hidden", !on); }
-
 function setControls(on) {
   $("answer-input").disabled = !on;
   $("btn-send").disabled = !on;
   $("btn-end").disabled = !on;
 }
 
+function setThinking(on) {
+  if (!on) $("thinking").textContent = "面试官思考中…";
+  $("thinking").classList.toggle("hidden", !on);
+  thinkingSince = on ? Date.now() : null;
+}
+
+function currentSessionFromUrl() {
+  return new URLSearchParams(location.search).get("session");
+}
+
+function setSessionInUrl(sid) {
+  history.replaceState(null, "", location.pathname + "?session=" + encodeURIComponent(sid));
+}
+
+function clearSessionInUrl() {
+  history.replaceState(null, "", location.pathname);
+}
+
+function addReportLink() {
+  if (!currentSessionId) return;
+  if ($("chat").querySelector('a[href*="/report"]')) return;
+  const link = document.createElement("a");
+  link.href = `/api/sessions/${currentSessionId}/report`;
+  link.target = "_blank";
+  link.textContent = "查看评估报告";
+  const box = document.createElement("div");
+  box.className = "msg system";
+  box.appendChild(link);
+  $("chat").appendChild(box);
+}
+
+function renderTranscript(entries) {
+  $("chat").innerHTML = "";
+  for (const e of entries) {
+    if (e.role === "interviewer") addChat("interviewer", e.content);
+    if (e.role === "candidate") addChat("candidate", e.content);
+  }
+  $("config-panel").open = false;
+}
+
+async function resumeSession(sid) {
+  const snap = await api(`/api/session?session_id=${encodeURIComponent(sid)}`);
+  if (snap.state === "missing") {
+    clearSessionInUrl();
+    return;
+  }
+  currentSessionId = sid;
+  const transcript = await api(`/api/sessions/${sid}/transcript`);
+  renderTranscript(transcript);
+  if (snap.state === "done") {
+    setControls(false);
+    addReportLink();
+    return;
+  }
+  setControls(true);
+  setThinking(!!snap.busy);
+  openStream(snap.last_seq || 0);
+}
+
 function handleEvent(e) {
   switch (e.type) {
     case "snapshot":
-      if (e.state === "done") setControls(false);
+      if (e.state === "done") {
+        setControls(false);
+        addReportLink();
+        if (es) es.close();
+      } else {
+        setThinking(!!e.busy);
+      }
       break;
     case "status":
-      if (e.status === "thinking") showThinking(true);
-      if (e.status === "evaluating") { showThinking(true); addChat("system", "评估报告生成中…"); }
+      if (e.status === "thinking") setThinking(true);
+      if (e.status === "evaluating") { setThinking(true); addChat("system", "评估报告生成中…"); }
       if (e.status === "done") {
-        showThinking(false);
+        setThinking(false);
         setControls(false);
-        const link = document.createElement("a");
-        link.href = `/api/sessions/${currentSessionId}/report`;
-        link.target = "_blank";
-        link.textContent = "查看评估报告";
-        const box = document.createElement("div");
-        box.className = "msg system";
-        box.appendChild(link);
-        $("chat").appendChild(box);
+        addReportLink();
         if (es) es.close();
       }
       break;
@@ -66,22 +123,37 @@ function handleEvent(e) {
       pendingBox.textContent = pendingBuf;
       break;
     case "turn_end":
-      showThinking(false);
+      setThinking(false);
       pendingBox = null;
       pendingBuf = "";
       break;
     case "error":
-      showThinking(false);
+      setThinking(false);
       addChat("system", "错误：" + e.message);
       break;
   }
 }
 
-function openStream() {
+function openStream(lastId) {
   if (es) es.close();
-  es = new EventSource(`/api/stream?session_id=${currentSessionId}`);
+  const url = `/api/stream?session_id=${encodeURIComponent(currentSessionId)}`
+    + (lastId ? `&last_id=${lastId}` : "");
+  es = new EventSource(url);
   es.onmessage = (ev) => handleEvent(JSON.parse(ev.data));
-  es.onerror = () => {}; // 自动重连；服务器推送 snapshot 事件同步状态
+  es.onopen = async () => {
+    if (!currentSessionId) return;
+    try {
+      const snap = await api(`/api/session?session_id=${encodeURIComponent(currentSessionId)}`);
+      if (snap.state === "done") {
+        setControls(false);
+        addReportLink();
+        if (es) es.close();
+      } else {
+        setThinking(!!snap.busy);
+      }
+    } catch (err) { /* 网络暂时不可达，EventSource 会继续重连 */ }
+  };
+  es.onerror = () => {}; // 自动重连；服务器按 Last-Event-ID 只补发未收到的事件
 }
 
 function startInterview() {
@@ -97,11 +169,13 @@ function startInterview() {
   api("/api/session/start", {method: "POST", body: fd})
     .then(({session_id}) => {
       currentSessionId = session_id;
+      setSessionInUrl(session_id);
       $("chat").innerHTML = "";
       $("config-panel").open = false;
       $("start-error").textContent = "";
       setControls(true);
-      openStream();
+      setThinking(false);
+      openStream(0);
     })
     .catch((e) => { $("start-error").textContent = e.message; });
 }
@@ -234,5 +308,19 @@ $("logout").onclick = async () => {
   await api("/api/logout", {method: "POST"}).catch(() => {});
   location.href = "/login";
 };
-switchView("interview");
+setInterval(() => {
+  if (thinkingSince && Date.now() - thinkingSince > 90_000) {
+    $("thinking").textContent = "回复耗时较长，仍在等待…（可稍后刷新页面恢复本场面试）";
+  }
+}, 5000);
 loadExperienceOptions();
+const savedSid = currentSessionFromUrl();
+if (savedSid) {
+  switchView("interview");
+  resumeSession(savedSid).catch(() => {
+    clearSessionInUrl();
+    switchView("interview");
+  });
+} else {
+  switchView("interview");
+}
