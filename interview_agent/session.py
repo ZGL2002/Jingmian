@@ -2,6 +2,7 @@
 from __future__ import annotations
 from .models import SessionConfig, SessionState, ResumeDocument
 from .prompts import build_system_prompt
+from .library import save_experience_ref
 from .storage import (
     append_jsonl, create_session_dir, init_transcript, offload_long_answer,
     timestamp, write_owned,
@@ -44,6 +45,10 @@ class InterviewSession:
         write_owned(self.session_dir / "prompt.md", self.config.user_id, prompt)
         if self.resume is not None:
             write_owned(self.session_dir / "resume.md", self.config.user_id, self.resume.raw_text)
+        if self.config.jd_text:
+            write_owned(self.session_dir / "jd.md", self.config.user_id, self.config.jd_text)
+        for i, ref in enumerate(self.config.experience_refs, 1):
+            save_experience_ref(self.session_dir, self.config.user_id, i, ref)
         self.messages = [{"role": "system", "content": prompt}]
         self.state = SessionState.OPENING
 
