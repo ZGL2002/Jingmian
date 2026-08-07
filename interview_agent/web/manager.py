@@ -69,12 +69,16 @@ class SessionManager:
         task = self.get_task(user_id, session_id)
         if task is None:
             raise KeyError("会话不存在")
+        if task.ended:
+            raise RuntimeError("这场面试已结束（可能异常退出），请重新开始一场")
         task.submit_answer(text)
 
     def end_session(self, user_id: str, session_id: str) -> None:
         task = self.get_task(user_id, session_id)
         if task is None:
             raise KeyError("会话不存在")
+        if task.ended:
+            raise RuntimeError("这场面试已结束（可能异常退出），请重新开始一场")
         task.request_end()
 
     def snapshot(self, user_id: str, session_id: str) -> dict:

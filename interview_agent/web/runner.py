@@ -65,7 +65,7 @@ class InterviewTask:
                     return
                 try:
                     item = self._answers.get(timeout=0.5)
-                except queue.Empty:
+                except _queue.Empty:
                     continue
                 if item[0] == "end":
                     break

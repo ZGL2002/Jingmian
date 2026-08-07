@@ -65,3 +65,14 @@ def test_idle_sweep_removes_task(tmp_path):
     m = make_manager(tmp_path, idle_timeout=0.1, sweep_interval=0.05)
     sid = m.start_session("alice")
     assert wait_until(lambda: m.get_task("alice", sid) is None)
+
+
+def test_submit_to_ended_task_gives_clear_error(tmp_path):
+    m = make_manager(tmp_path)
+    sid = m.start_session("alice")
+    m.get_task("alice", sid).ended = True
+    try:
+        m.submit_answer("alice", sid, "x")
+        assert False, "应当抛出 RuntimeError"
+    except RuntimeError as e:
+        assert "重新开始" in str(e)

@@ -81,3 +81,17 @@ def test_shutdown_stops_without_evaluation(tmp_path):
     assert wait_until(lambda: task.ended)
     assert not any(e.get("status") == "done" for e in task.queue.snapshot())
     assert s.state != SessionState.DONE
+
+
+def test_empty_timeout_does_not_crash(tmp_path):
+    """开场后未回答、答案队列 get 超时（0.5s）不应触发 NameError。"""
+    task, s = make_task(tmp_path, [AssistantTurn(content="开场")])
+    task.start()
+    assert wait_until(lambda: any(e["type"] == "turn_end" for e in task.queue.snapshot()))
+    time.sleep(0.8)  # 越过 _answers.get(timeout=0.5) 的超时窗口
+    assert not any(e["type"] == "error" for e in task.queue.snapshot())
+    assert not task.ended
+    assert task.error is None
+    # 超时之后仍能正常提交回答
+    task.submit_answer("回答1")
+    assert task.busy
