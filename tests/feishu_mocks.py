@@ -11,12 +11,15 @@ class MockFeishuClient:
         self.patched: list[tuple[str, str]] = []     # (message_id, text)
         self.cards: list[tuple[str, str, str]] = []  # (open_id, title, markdown)
         self.patch_ok = True
+        self.msg_owner: dict[str, str] = {}          # message_id -> open_id
         self._n = 0
 
     def send_text(self, open_id, text):
         self._n += 1
+        mid = f"om_mock_{self._n}"
         self.sent.append((open_id, text))
-        return f"om_mock_{self._n}"
+        self.msg_owner[mid] = open_id
+        return mid
 
     def patch_text(self, message_id, text):
         if not self.patch_ok:
@@ -29,6 +32,9 @@ class MockFeishuClient:
 
     def texts_to(self, open_id):
         return [t for o, t in self.sent if o == open_id]
+
+    def patched_to(self, open_id):
+        return [t for mid, t in self.patched if self.msg_owner.get(mid) == open_id]
 
 
 class FakeManager:

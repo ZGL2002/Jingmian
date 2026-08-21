@@ -35,17 +35,17 @@ def test_two_users_full_interview_isolated(tmp_path):
     u1, u2 = "ou_user1", "ou_user2"
     start_via_onboarding(bot, u1)
     start_via_onboarding(bot, u2)
+    # 两个 runner 线程共享一个脚本 LLM，回合内容按调度顺序分配——断言只看
+    # 每用户的回合补丁数与消息归属，不依赖具体回合文本。
     for u in (u1, u2):
         assert wait_until(lambda u=u: any("面试已开始" in t for t in c.texts_to(u)))
-        assert wait_until(
-            lambda: any(text in ("开场1", "开场2") for _, text in c.patched)
-        )
+        # 开场回合已输出（busy 已释放）
+        assert wait_until(lambda u=u: len(c.patched_to(u)) >= 1)
     bot.handle_message(u1, "回答甲")
     bot.handle_message(u2, "回答乙")
     for u in (u1, u2):
-        assert wait_until(
-            lambda: any(text.startswith("问题") for _, text in c.patched)
-        )
+        # 本回合输出完成后再结束，避免撞上思考中
+        assert wait_until(lambda u=u: len(c.patched_to(u)) >= 2)
         bot.handle_message(u, "结束")
         assert wait_until(lambda u=u: any(t == EVALUATING_TEXT for t in c.texts_to(u)))
         assert wait_until(lambda u=u: len([x for x in c.cards if x[0] == u]) == 1)
