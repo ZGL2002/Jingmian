@@ -1,10 +1,12 @@
 import json
+from pathlib import Path
 from types import SimpleNamespace
 from interview_agent.feishu.bot import (
-    THINKING_TEXT, IDLE_HINT, HELP_TEXT, FeishuBot,
+    THINKING_TEXT, IDLE_HINT, HELP_TEXT, EVALUATING_TEXT, EMPTY_TURN_TEXT,
+    FeishuBot,
 )
 from interview_agent.feishu.onboarding import ASK_COMPANY
-from feishu_mocks import FakeManager, MockFeishuClient
+from feishu_mocks import FakeManager, FakeTask, MockFeishuClient
 
 
 def make_bot():
@@ -112,4 +114,102 @@ def test_handle_event_malformed_is_ignored():
     bot, _, c = make_bot()
     bot.handle_event(SimpleNamespace(header=None))
     bot.handle_event("not an event")
+    assert c.sent == []
+
+
+# ---------- 事件泵（Task 5）----------
+
+def test_pump_turn_flow_placeholder_then_patch(tmp_path):
+    bot, m, c = make_bot()
+    bot._active["ou_1"] = "sess1"
+    task = FakeTask(tmp_path)
+    q = task.queue
+    q.publish({"type": "status", "status": "thinking"})
+    q.publish({"type": "delta", "text": "请"})
+    q.publish({"type": "delta", "text": "介绍自己"})
+    q.publish({"type": "turn_end", "question_count": 1})
+    q.publish({"type": "status", "status": "evaluating"})
+    (Path(tmp_path) / "report.md").write_text("## 报告", encoding="utf-8")
+    q.publish({"type": "status", "status": "done", "report_url": "/x"})
+    bot._pump("ou_1", "sess1", task)
+    assert c.sent[0] == ("ou_1", THINKING_TEXT)
+    assert c.patched == [("om_mock_1", "请介绍自己")]
+    assert ("ou_1", EVALUATING_TEXT) in c.sent
+    assert c.cards == [("ou_1", "面试评估报告", "## 报告")]
+    assert "ou_1" not in bot._active  # 已清理
+
+
+def test_pump_first_delta_creates_placeholder_without_thinking(tmp_path):
+    """开场白没有 thinking 前导：首个 delta 也要先建占位。"""
+    bot, m, c = make_bot()
+    bot._active["ou_1"] = "sess1"
+    task = FakeTask(tmp_path)
+    q = task.queue
+    q.publish({"type": "delta", "text": "你好，我是面试官"})
+    q.publish({"type": "turn_end", "question_count": 0})
+    q.publish({"type": "status", "status": "done", "report_url": "/x"})
+    (Path(tmp_path) / "report.md").write_text("# r", encoding="utf-8")
+    bot._pump("ou_1", "sess1", task)
+    assert c.sent[0] == ("ou_1", THINKING_TEXT)
+    assert c.patched == [("om_mock_1", "你好，我是面试官")]
+
+
+def test_pump_patch_failure_falls_back_to_send(tmp_path):
+    bot, m, c = make_bot()
+    c.patch_ok = False
+    bot._active["ou_1"] = "sess1"
+    task = FakeTask(tmp_path)
+    q = task.queue
+    q.publish({"type": "delta", "text": "问题X"})
+    q.publish({"type": "turn_end", "question_count": 1})
+    q.publish({"type": "status", "status": "done", "report_url": "/x"})
+    (Path(tmp_path) / "report.md").write_text("# r", encoding="utf-8")
+    bot._pump("ou_1", "sess1", task)
+    assert ("ou_1", "问题X") in c.sent
+
+
+def test_pump_empty_turn_patches_fallback_text(tmp_path):
+    bot, m, c = make_bot()
+    bot._active["ou_1"] = "sess1"
+    task = FakeTask(tmp_path)
+    q = task.queue
+    q.publish({"type": "status", "status": "thinking"})
+    q.publish({"type": "turn_end", "question_count": 1})
+    q.publish({"type": "status", "status": "done", "report_url": "/x"})
+    (Path(tmp_path) / "report.md").write_text("# r", encoding="utf-8")
+    bot._pump("ou_1", "sess1", task)
+    assert c.patched[0][1] == EMPTY_TURN_TEXT
+
+
+def test_pump_error_and_missing_report(tmp_path):
+    bot, m, c = make_bot()
+    bot._active["ou_1"] = "sess1"
+    task = FakeTask(tmp_path)
+    task.queue.publish({"type": "error", "message": "LLM 挂了"})
+    bot._pump("ou_1", "sess1", task)
+    assert any("LLM 挂了" in t for t in c.texts_to("ou_1"))
+    assert "ou_1" not in bot._active
+    # done 但报告缺失：提示去服务器看
+    bot._active["ou_1"] = "sess2"
+    task2 = FakeTask(tmp_path)
+    task2.queue.publish({"type": "status", "status": "done", "report_url": "/x"})
+    bot._pump("ou_1", "sess2", task2)
+    assert any("报告" in t and "服务器" in t for t in c.texts_to("ou_1"))
+
+
+def test_pump_task_ended_without_events_sends_notice(tmp_path):
+    bot, m, c = make_bot()
+    bot._active["ou_1"] = "sess1"
+    task = FakeTask(tmp_path)
+    task.ended = True  # 空闲回收：无 done/error 事件
+    bot._pump("ou_1", "sess1", task)
+    assert any("已结束" in t for t in c.texts_to("ou_1"))
+    assert "ou_1" not in bot._active
+
+
+def test_pump_none_task_exits_without_cleanup():
+    bot, m, c = make_bot()
+    bot._active["ou_1"] = "sess1"
+    bot._pump("ou_1", "sess1", None)
+    assert bot._active.get("ou_1") == "sess1"  # 不清理，交由后续路径处理
     assert c.sent == []

@@ -151,5 +151,61 @@ class FeishuBot:
 
     # ---------- 出站：事件泵（语音预留边界：未来在此加文本→TTS 渲染） ----------
 
+    POLL_INTERVAL = 1.0
+
     def _pump(self, open_id: str, session_id: str, task) -> None:
-        return  # Task 5 实现
+        if task is None:
+            print(f"[feishu] 会话 {session_id} 无活跃任务，事件泵退出")
+            return
+        seq = 0
+        placeholder_id: str | None = None
+        buf: list[str] = []
+        while True:
+            items = task.queue.wait_for_events_after(seq, timeout=self.POLL_INTERVAL)
+            for s, ev in items:
+                seq = s
+                kind = ev.get("type")
+                if kind == "status" and ev.get("status") == "thinking":
+                    if placeholder_id is None:
+                        placeholder_id = self._send(open_id, THINKING_TEXT)
+                elif kind == "delta":
+                    if placeholder_id is None:
+                        placeholder_id = self._send(open_id, THINKING_TEXT)
+                    buf.append(ev.get("text", ""))
+                elif kind == "turn_end":
+                    content = "".join(buf) or EMPTY_TURN_TEXT
+                    buf.clear()
+                    if placeholder_id is not None:
+                        if not self._client.patch_text(placeholder_id, content):
+                            self._send(open_id, content)
+                        placeholder_id = None
+                    else:
+                        self._send(open_id, content)
+                elif kind == "status" and ev.get("status") == "evaluating":
+                    self._send(open_id, EVALUATING_TEXT)
+                elif kind == "status" and ev.get("status") == "done":
+                    self._send_report(open_id, task)
+                    self._cleanup(open_id, session_id)
+                    return
+                elif kind == "error":
+                    self._send(open_id, f"面试出错了：{ev.get('message', '')}")
+                    self._cleanup(open_id, session_id)
+                    return
+            if not items and task.ended:
+                self._send(open_id, "本场面试已结束（空闲超时或异常）。发送「开始面试」可再来一场。")
+                self._cleanup(open_id, session_id)
+                return
+
+    def _send_report(self, open_id: str, task) -> None:
+        p = task.session.session_dir / "report.md"
+        if p.is_file():
+            self._client.send_markdown_card(
+                open_id, "面试评估报告", p.read_text(encoding="utf-8")
+            )
+        else:
+            self._send(open_id, "评估已完成但报告文件缺失，请联系管理员在服务器会话目录查看。")
+
+    def _cleanup(self, open_id: str, session_id: str) -> None:
+        if self._active.get(open_id) == session_id:
+            del self._active[open_id]
+        self._pump_threads.pop(session_id, None)
