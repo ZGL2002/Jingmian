@@ -16,6 +16,8 @@ def load_config(env_path: str | None = None) -> dict:
         ),
         "context_safety_ratio": float(os.environ.get("INTERVIEW_CONTEXT_SAFETY_RATIO", "0.8")),
         "session_root": os.environ.get("INTERVIEW_ROOT", "interviews"),
+        "feishu_app_id": os.environ.get("FEISHU_APP_ID", ""),
+        "feishu_app_secret": os.environ.get("FEISHU_APP_SECRET", ""),
         "web_host": os.environ.get("INTERVIEW_WEB_HOST", "0.0.0.0"),
         "web_port": int(os.environ.get("INTERVIEW_WEB_PORT", "8765")),
         "web_token": os.environ.get("INTERVIEW_WEB_TOKEN", ""),
