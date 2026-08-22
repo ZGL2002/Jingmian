@@ -12,7 +12,10 @@ def main() -> None:
     cfg = load_config()
     app_id, app_secret = require_feishu_credentials(cfg)
     api_key = require_api_key()
-    llm = create_llm(api_key, cfg.get("model", "deepseek-chat"))
+    llm = create_llm(
+        api_key, cfg.get("model", "deepseek-chat"),
+        provider=cfg.get("provider", "deepseek"),
+    )
     manager = SessionManager(cfg, llm)
     bot = FeishuBot(manager, LarkFeishuClient(app_id, app_secret))
 

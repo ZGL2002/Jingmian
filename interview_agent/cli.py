@@ -7,7 +7,7 @@ from .resume import extract_text, parse_resume
 from .session import InterviewSession
 from .agent import ToolAgent, _strip_role_leak
 from .evaluate import run_evaluation
-from .llm import DeepSeekClient, LLMError
+from .llm import LLMError, create_llm
 from .tools import default_registry
 from .tools.base import ToolContext
 from .security import PathPolicy
@@ -110,7 +110,10 @@ def run_cli(cfg: dict, llm=None, user_inputs: list[str] | None = None) -> str:
         wrap_allowed=session.can_auto_wrap,
     )
     if llm is None:
-        llm = DeepSeekClient(require_api_key(), model=config.model)
+        llm = create_llm(
+            require_api_key(), model=config.model,
+            provider=cfg.get("provider", "deepseek"),
+        )
     agent = ToolAgent(llm, registry, session, tool_ctx)
 
     opening = llm.chat(session.messages, tools=registry.schemas())

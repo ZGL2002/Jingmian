@@ -10,7 +10,9 @@ def main() -> None:
     cfg = load_config()
     api_key = require_api_key()
     require_web_token(cfg)
-    llm = create_llm(api_key=api_key, model=cfg["model"])
+    llm = create_llm(
+        api_key=api_key, model=cfg["model"], provider=cfg.get("provider", "deepseek")
+    )
     app = create_app(cfg, llm=llm)
     uvicorn.run(
         app,

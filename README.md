@@ -7,7 +7,9 @@
 ```bash
 python -m pip install -e ".[dev]"
 cp .env.example .env
-# 编辑 .env，填入 DEEPSEEK_API_KEY
+# 编辑 .env，填入密钥：
+#   DeepSeek：DEEPSEEK_API_KEY
+#   阿里云百炼：INTERVIEW_PROVIDER=dashscope + DASHSCOPE_API_KEY（模型默认 qwen-plus，可选 qwen-max/qwen-turbo/deepseek-v3）
 ```
 
 ## 使用

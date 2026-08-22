@@ -3,11 +3,20 @@ from __future__ import annotations
 import os
 from dotenv import load_dotenv
 
+# 各 provider 对应的密钥环境变量名
+PROVIDER_KEY_ENV = {
+    "deepseek": "DEEPSEEK_API_KEY",
+    "dashscope": "DASHSCOPE_API_KEY",
+}
+
 
 def load_config(env_path: str | None = None) -> dict:
     load_dotenv(env_path or ".env")
+    provider = os.environ.get("INTERVIEW_PROVIDER", "deepseek")
+    key_env = PROVIDER_KEY_ENV.get(provider, "DEEPSEEK_API_KEY")
     return {
-        "api_key": os.environ.get("DEEPSEEK_API_KEY", ""),
+        "provider": provider,
+        "api_key": os.environ.get(key_env, ""),
         "model": os.environ.get("INTERVIEW_MODEL", "deepseek-chat"),
         "min_questions": int(os.environ.get("INTERVIEW_MIN_QUESTIONS", "10")),
         "language": os.environ.get("INTERVIEW_LANG", "zh"),
@@ -26,9 +35,14 @@ def load_config(env_path: str | None = None) -> dict:
 
 
 def require_api_key(env_path: str | None = None) -> str:
-    key = load_config(env_path)["api_key"]
+    cfg = load_config(env_path)
+    key = cfg["api_key"]
     if not key:
-        raise KeyError("缺少 DEEPSEEK_API_KEY：请在 .env 中配置 DEEPSEEK_API_KEY，或设置同名环境变量")
+        key_env = PROVIDER_KEY_ENV.get(cfg["provider"], "DEEPSEEK_API_KEY")
+        raise KeyError(
+            f"缺少 {key_env}：请在 .env 中配置 {key_env}"
+            f"（当前 INTERVIEW_PROVIDER={cfg['provider']}），或设置同名环境变量"
+        )
     return key
 
 

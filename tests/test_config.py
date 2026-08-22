@@ -42,3 +42,34 @@ def test_load_config_feishu_keys_from_env(tmp_path, monkeypatch):
     cfg = load_config(str(env_file))
     assert cfg["feishu_app_id"] == "cli_test123"
     assert cfg["feishu_app_secret"] == "sec_test"
+
+
+def test_load_config_provider_default(tmp_path, monkeypatch):
+    env_file = tmp_path / "empty.env"
+    env_file.write_text("", encoding="utf-8")
+    monkeypatch.delenv("INTERVIEW_PROVIDER", raising=False)
+    cfg = load_config(str(env_file))
+    assert cfg["provider"] == "deepseek"
+
+
+def test_load_config_dashscope_key(tmp_path, monkeypatch):
+    env_file = tmp_path / "empty.env"
+    env_file.write_text("INTERVIEW_PROVIDER=dashscope\n", encoding="utf-8")
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
+    monkeypatch.setenv("DASHSCOPE_API_KEY", "sk-ali-test")
+    cfg = load_config(str(env_file))
+    assert cfg["provider"] == "dashscope"
+    assert cfg["api_key"] == "sk-ali-test"
+
+
+def test_require_api_key_dashscope_missing_names_right_env(tmp_path, monkeypatch):
+    env_file = tmp_path / "empty.env"
+    env_file.write_text("INTERVIEW_PROVIDER=dashscope\n", encoding="utf-8")
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.delenv("DASHSCOPE_API_KEY", raising=False)
+    try:
+        require_api_key(str(env_file))
+        raise AssertionError("应当抛出 KeyError")
+    except KeyError as e:
+        assert "DASHSCOPE_API_KEY" in str(e)

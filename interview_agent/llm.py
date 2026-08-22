@@ -37,11 +37,16 @@ class LLMClient:
         raise NotImplementedError
 
 
-class DeepSeekClient(LLMClient):
-    def __init__(self, api_key: str, model: str = "deepseek-chat"):
+class OpenAICompatibleClient(LLMClient):
+    """OpenAI 兼容协议客户端基类：DeepSeek / 阿里云百炼（DashScope）等共用。"""
+
+    BASE_URL: str = ""
+    LABEL: str = "LLM"
+
+    def __init__(self, api_key: str, model: str):
         self._client = OpenAI(
             api_key=api_key,
-            base_url="https://api.deepseek.com",
+            base_url=self.BASE_URL,
             timeout=60.0,
         )
         self._model = model
@@ -55,9 +60,9 @@ class DeepSeekClient(LLMClient):
                 kwargs["max_tokens"] = max_tokens
             msg = self._client.chat.completions.create(**kwargs).choices[0].message
         except AuthenticationError:
-            raise LLMError("DeepSeek API key 无效或未授权") from None
+            raise LLMError(f"{self.LABEL} API key 无效或未授权") from None
         except Exception as e:  # noqa: BLE001 - 统一包装为 LLMError 由上层重试/提示
-            raise LLMError(f"DeepSeek 调用失败: {e}") from None
+            raise LLMError(f"{self.LABEL} 调用失败: {e}") from None
         tool_calls = [
             ToolCall(id=t.id, name=t.function.name, arguments=json.loads(t.function.arguments or "{}"))
             for t in (msg.tool_calls or [])
@@ -104,13 +109,33 @@ class DeepSeekClient(LLMClient):
                 tool_calls=tool_calls,
             ))
         except AuthenticationError:
-            raise LLMError("DeepSeek API key 无效或未授权") from None
+            raise LLMError(f"{self.LABEL} API key 无效或未授权") from None
         except Exception as e:  # noqa: BLE001 - 统一包装为 LLMError 由上层重试/提示
-            raise LLMError(f"DeepSeek 调用失败: {e}") from None
+            raise LLMError(f"{self.LABEL} 调用失败: {e}") from None
+
+
+class DeepSeekClient(OpenAICompatibleClient):
+    BASE_URL = "https://api.deepseek.com"
+    LABEL = "DeepSeek"
+
+    def __init__(self, api_key: str, model: str = "deepseek-chat"):
+        super().__init__(api_key, model)
+
+
+class DashScopeClient(OpenAICompatibleClient):
+    """阿里云百炼（通义千问 / DeepSeek 托管等），OpenAI 兼容模式端点。"""
+
+    BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    LABEL = "阿里云百炼"
+
+    def __init__(self, api_key: str, model: str = "qwen-plus"):
+        super().__init__(api_key, model)
 
 
 def create_llm(api_key: str, model: str = "deepseek-chat", provider: str = "deepseek") -> LLMClient:
     """LLM 客户端工厂：未来多用户 BYOK 只改这里传入的 api_key 来源。"""
     if provider == "deepseek":
         return DeepSeekClient(api_key=api_key, model=model)
+    if provider == "dashscope":
+        return DashScopeClient(api_key=api_key, model=model)
     raise ValueError(f"不支持的 provider: {provider}")

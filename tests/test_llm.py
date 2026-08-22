@@ -1,5 +1,8 @@
 import pytest
-from interview_agent.llm import LLMClient, DeepSeekClient, LLMError, AssistantTurn, ToolCall
+from interview_agent.llm import (
+    LLMClient, DeepSeekClient, DashScopeClient, LLMError, AssistantTurn, ToolCall,
+    create_llm,
+)
 
 class FakeMessage:
     def __init__(self, content=None, tool_calls=None):
@@ -57,3 +60,26 @@ def test_auth_error_mapped(monkeypatch):
     client, _ = make_client(monkeypatch, FakeMessage(), error=AuthError())
     with pytest.raises(LLMError):
         client.chat([])
+
+
+def test_create_llm_dashscope():
+    c = create_llm("sk-ali", "qwen-plus", provider="dashscope")
+    assert isinstance(c, DashScopeClient)
+
+
+def test_create_llm_unknown_provider():
+    with pytest.raises(ValueError):
+        create_llm("sk-x", "m", provider="nonexistent")
+
+
+def test_dashscope_uses_compatible_mode_base_url(monkeypatch):
+    captured = {}
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    import interview_agent.llm as mod
+    monkeypatch.setattr(mod, "OpenAI", FakeOpenAI)
+    DashScopeClient("sk-ali", "qwen-plus")
+    assert captured["base_url"] == "https://dashscope.aliyuncs.com/compatible-mode/v1"
