@@ -213,3 +213,49 @@ def test_pump_none_task_exits_without_cleanup():
     bot._pump("ou_1", "sess1", None)
     assert bot._active.get("ou_1") == "sess1"  # 不清理，交由后续路径处理
     assert c.sent == []
+
+
+def _post_event(event_id, content_obj):
+    ev = make_event(msg_type="post", text="", event_id=event_id)
+    ev.event.message.content = json.dumps(content_obj, ensure_ascii=False)
+    return ev
+
+
+def test_handle_event_post_flattened_to_text():
+    """富文本粘贴应拍平为纯文本进入对话，而不是被拒。"""
+    bot, _, c = make_bot()
+    bot.handle_message("ou_1", "开始面试")
+    bot.handle_event(_post_event("e9", {
+        "title": "自我介绍",
+        "content": [
+            [{"tag": "text", "text": "三年后端经验，"},
+             {"tag": "a", "text": "项目主页", "href": "https://x.com"}],
+            [{"tag": "text", "text": "熟悉 Redis"}],
+        ],
+    }))
+    # 第一条引导输入被接受（公司名 = 拍平文本），进入问岗位
+    assert any("岗位" in t for t in c.texts_to("ou_1"))
+
+
+def test_handle_event_post_multiline_joins_paragraphs():
+    """富文本多段落应按换行拼接，进入简历收集后保留多行结构。"""
+    bot, m, c = make_bot()
+    bot.handle_message("ou_1", "开始面试")
+    bot.handle_message("ou_1", "字节")
+    bot.handle_message("ou_1", "后端")
+    bot.handle_event(_post_event("e10", {
+        "content": [
+            [{"tag": "text", "text": "技能A"}],
+            [{"tag": "text", "text": "技能B"}],
+        ],
+    }))
+    bot.handle_message("ou_1", "END")
+    assert m.started[0]["resume_text"] == "技能A\n技能B"
+
+
+def test_handle_event_post_media_only_still_unsupported():
+    bot, _, c = make_bot()
+    bot.handle_event(_post_event("e12", {
+        "content": [[{"tag": "img", "image_key": "img_v2_x"}]],
+    }))
+    assert any("文字" in t for t in c.texts_to("ou_1"))

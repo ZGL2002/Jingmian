@@ -38,6 +38,22 @@ class FeishuBot:
 
     # ---------- 入站：事件规范化（语音预留边界：未来在此加 audio→ASR） ----------
 
+    UNSUPPORTED_HINT = "暂仅支持文字消息（富文本粘贴会自动转文字；图片/语音暂不支持，语音面试将在后续版本支持）"
+
+    @staticmethod
+    def _post_to_text(content: str) -> str:
+        """把飞书富文本（post）拍平为纯文本：段落间换行，仅取 text/a 标签的文字。"""
+        try:
+            post = json.loads(content or "{}")
+            paragraphs: list[str] = []
+            for para in post.get("content", []):
+                parts = [el.get("text", "") for el in para if el.get("tag") in ("text", "a")]
+                if "".join(parts).strip():
+                    paragraphs.append("".join(parts))
+            return "\n".join(paragraphs)
+        except (AttributeError, TypeError, ValueError):
+            return ""
+
     def handle_event(self, event) -> None:
         """lark-oapi P2ImMessageReceiveV1 回调入口。"""
         try:
@@ -45,7 +61,7 @@ class FeishuBot:
             chat_type = event.event.message.chat_type
             msg_type = event.event.message.message_type
             open_id = event.event.sender.sender_id.open_id
-            text = json.loads(event.event.message.content or "{}").get("text", "")
+            raw_content = event.event.message.content or "{}"
         except (AttributeError, TypeError, ValueError):
             return
         with self._dispatch_lock:
@@ -57,8 +73,17 @@ class FeishuBot:
             self._seen.append(event_id)
         if chat_type != "p2p":
             return
-        if msg_type != "text":
-            self._send(open_id, "暂仅支持文字消息（语音面试将在后续版本支持）")
+        if msg_type == "text":
+            try:
+                text = json.loads(raw_content).get("text", "")
+            except ValueError:
+                text = ""
+        elif msg_type == "post":
+            text = self._post_to_text(raw_content)
+        else:
+            text = ""
+        if not text.strip():
+            self._send(open_id, self.UNSUPPORTED_HINT)
             return
         self.handle_message(open_id, text)
 
