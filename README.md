@@ -60,7 +60,7 @@ python -m interview_agent.feishu
 
 1. [飞书开放平台](https://open.feishu.cn/) → 创建**企业自建应用** → 记下 `App ID` / `App Secret` 填入 `.env`。
 2. 应用能力 → 添加**机器人**。
-3. 权限管理 → 开通：`im:message`（读取用户发给机器人的单聊消息）、`im:message:send_as_bot`（以机器人身份发消息）。
+3. 权限管理 → 开通：`im:message.p2p_msg:readonly`（读取用户发给机器人的单聊消息，**接收消息必需**）、`im:message:send_as_bot`（以机器人身份发消息）。
 4. 事件与回调 → 事件配置 → 订阅方式选择**使用长连接接收事件** → 添加事件 `im.message.receive_v1`（接收消息）。
 5. 版本管理与发布 → 创建版本并发布，可用范围设为全员（或按需）。
 

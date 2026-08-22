@@ -1,5 +1,6 @@
 """飞书渠道入口：python -m interview_agent.feishu（长连接模式，无需公网 IP）。"""
 from __future__ import annotations
+import os
 from ..config import load_config, require_api_key
 from ..llm import create_llm
 from ..web.manager import SessionManager
@@ -21,8 +22,11 @@ def main() -> None:
         .register_p2_im_message_receive_v1(bot.handle_event)
         .build()
     )
+    log_level = (lark.LogLevel.DEBUG
+                 if os.environ.get("INTERVIEW_FEISHU_LOG", "").upper() == "DEBUG"
+                 else lark.LogLevel.INFO)
     ws = lark.ws.Client(
-        app_id, app_secret, event_handler=handler, log_level=lark.LogLevel.INFO
+        app_id, app_secret, event_handler=handler, log_level=log_level
     )
     print("飞书机器人已启动（长连接模式），等待私聊消息… Ctrl+C 退出")
     ws.start()
