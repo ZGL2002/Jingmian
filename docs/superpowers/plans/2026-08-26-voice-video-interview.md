@@ -18,7 +18,7 @@
 - 音频留档**只有一个文件**：`interviews/<user_id>/<session_id>/audio/interview.webm`（整场混音）。ASR/TTS 中间数据不落档（ASR 临时文件识别后立即删除）。
 - 文字记录维持 `transcript.jsonl` 不变，仅 meta 行新增 `style` 字段；不改动对话行的结构。
 - 摄像头视频不录制、不存储。
-- 语音作答结束判定：VAD 自动结束**默认开启**（`AnalyserNode` 100ms 采样；阈值=max(0.5s 环境噪声基线×3, 0.01)；开口后连续静音 ≥2000ms 自动停录送识别；倒计时提示，继续说即取消）；「自动结束作答」开关可关，退回手动点击「⏹ 结束作答」。
+- 语音作答结束判定：VAD 自动结束**默认开启**（`AnalyserNode` 100ms 采样；阈值=max(0.5s 环境噪声基线×3, 0.01)；开口后连续静音 ≥5000ms 自动停录送识别；倒计时提示，继续说即取消）；「自动结束作答」开关可关，退回手动点击「⏹ 结束作答」。
 - 所有新端点走现有 `TokenAuthMiddleware` 认证；路径一律 SID 白名单 `[\w\-]+` + `resolve()` + 越界检查。
 - 上传上限：ASR 20MB、整场音频 500MB、背景 50MB；TTS 单次文本 ≤500 字。
 - UI 与文档文案用中文。
@@ -1285,7 +1285,7 @@ git commit -m "feat: 按风格上传自定义动态背景（内置 CSS 主题的
       </label>
       <label class="voice-toggle">
         <input type="checkbox" id="cfg-autostop" checked>
-        自动结束作答（检测到停顿约 2 秒自动结束录音；关闭则需手动点击结束）
+        自动结束作答（检测到停顿约 5 秒自动结束录音；关闭则需手动点击结束）
       </label>
       <label>简历文本<textarea id="cfg-resume" placeholder="粘贴简历，或使用下方文件上传"></textarea></label>
       <label>上传简历文件<input type="file" id="cfg-resume-file" accept=".txt,.md,.pdf"></label>
@@ -2032,7 +2032,7 @@ async function toggleRecording() {
     };
   }
   await voice.startAnswer(autoStop ? {
-    autoStopMs: 2000,
+    autoStopMs: 5000,
     onAutoStop: () => { if (btn.classList.contains("recording")) stopAnswerAndRecognize(); },
   } : {});
 }
@@ -2246,7 +2246,7 @@ Expected: 全部 PASS（前端改动不影响后端）。
 用 Task 8 Step 4 方式起服务（真实 `.env`：`INTERVIEW_PROVIDER=dashscope DASHSCOPE_API_KEY=... INTERVIEW_WEB_TOKEN=t`），浏览器打开：
 
 1. 无 key/未配置：勾选语音模式开始 → 录音停止后提示"语音识别失败…（语音功能未启用）"或开始时即提示；文本面试完全正常——确认降级；
-2. 有 key：选择"温和"，勾选语音模式，授权摄像头+麦克风 → 开始面试：摄像头小窗出现、面试官开场白逐句播放语音、stage 呈暖色主题；点 🎤 说一句话后停顿 → 按钮出现"停顿中…Ns 后自动结束"倒计时 → 静音 2 秒自动结束 → 输入框回填识别文字 → 回车发送 → 下一题语音播报；再测：说话中点击 ⏹ 手动结束可用；取消勾选"自动结束作答"后退回纯手动；点"🔊 重听"重复播上一轮；点"结束面试" → done 后 `interviews/local/<sid>/audio/interview.webm` 生成且可播放；历史页该场显示"音频✓"，详情页有 `<audio>` 播放器能出声（含双方声音）；
+2. 有 key：选择"温和"，勾选语音模式，授权摄像头+麦克风 → 开始面试：摄像头小窗出现、面试官开场白逐句播放语音、stage 呈暖色主题；点 🎤 说一句话后停顿 → 按钮出现"停顿中…Ns 后自动结束"倒计时 → 静音 5 秒自动结束 → 输入框回填识别文字 → 回车发送 → 下一题语音播报；再测：说话中点击 ⏹ 手动结束可用；取消勾选"自动结束作答"后退回纯手动；点"🔊 重听"重复播上一轮；点"结束面试" → done 后 `interviews/local/<sid>/audio/interview.webm` 生成且可播放；历史页该场显示"音频✓"，详情页有 `<audio>` 播放器能出声（含双方声音）；
 3. 背景覆盖：上传一个 gif → stage 背景变为该 gif（半透明叠加），换风格再上传另一个 → 各自生效。
 
 无法授权真实设备的 CI/无头环境：改用 Chrome 启动参数 `--use-fake-device-for-media-stream --autoplay-policy=no-user-gesture-required` 配合 browser-use 技能完成第 2 步；仍不可行时把第 2 步标注"待用户真机验证"并在交付说明中列出手动步骤。
@@ -2301,7 +2301,7 @@ git commit -m "feat(web): 语音面试前端集成——风格切换、语音作
 - **选择面试官风格**：严肃（默认）/ 冷漠 / 温和 / 引导——同时决定动态背景、面试官提问人设与语音音色；
   每种风格还可上传自定义动态背景（gif/mp4/webm/png）覆盖内置动画；
 - **勾选语音模式**：浏览器授权麦克风+摄像头后——
-  - 点「🎤 开始作答」说话；默认开启自动结束（检测到停顿约 2 秒倒计时后自动结束并识别，继续说即取消；配置面板可关，关闭后点「⏹ 结束作答」手动结束），识别为文字回填输入框，确认/修正后回车发送；
+  - 点「🎤 开始作答」说话；默认开启自动结束（检测到停顿约 5 秒倒计时后自动结束并识别，继续说即取消；配置面板可关，关闭后点「⏹ 结束作答」手动结束），识别为文字回填输入框，确认/修正后回车发送；
   - 面试官每句话自动语音播报，听不清点消息下方「🔊 重听」（也可直接看文字）；
   - 摄像头画面仅本地实时预览，不录制不存储；
   - 整场面试（双方声音混音）录制为一个 `audio/interview.webm`，保存在本场会话目录 `audio/` 下，
