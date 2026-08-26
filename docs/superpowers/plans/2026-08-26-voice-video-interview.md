@@ -18,6 +18,7 @@
 - 音频留档**只有一个文件**：`interviews/<user_id>/<session_id>/audio/interview.webm`（整场混音）。ASR/TTS 中间数据不落档（ASR 临时文件识别后立即删除）。
 - 文字记录维持 `transcript.jsonl` 不变，仅 meta 行新增 `style` 字段；不改动对话行的结构。
 - 摄像头视频不录制、不存储。
+- 语音作答结束判定：VAD 自动结束**默认开启**（`AnalyserNode` 100ms 采样；阈值=max(0.5s 环境噪声基线×3, 0.01)；开口后连续静音 ≥2000ms 自动停录送识别；倒计时提示，继续说即取消）；「自动结束作答」开关可关，退回手动点击「⏹ 结束作答」。
 - 所有新端点走现有 `TokenAuthMiddleware` 认证；路径一律 SID 白名单 `[\w\-]+` + `resolve()` + 越界检查。
 - 上传上限：ASR 20MB、整场音频 500MB、背景 50MB；TTS 单次文本 ≤500 字。
 - UI 与文档文案用中文。
@@ -1248,7 +1249,7 @@ git commit -m "feat: 按风格上传自定义动态背景（内置 CSS 主题的
 
 **Interfaces:**
 - Consumes: `GET /api/styles`（Task 3）
-- Produces: DOM 契约（Task 9/10 依赖的 id）：`cfg-styles`（风格选择容器）、`cfg-voice`（语音模式 checkbox）、`cfg-bg-file`+`btn-bg-upload`（背景上传）、`stage`（舞台容器，`data-theme` 属性驱动主题）、`bg-layer`（自定义背景层）、`cam-preview`（摄像头 video）、`btn-record`（语音作答按钮）、`btn-replay`（重听按钮，JS 动态生成）；`window.VoiceEngine`（Task 9）。
+- Produces: DOM 契约（Task 9/10 依赖的 id）：`cfg-styles`（风格选择容器）、`cfg-voice`（语音模式 checkbox）、`cfg-autostop`（VAD 自动结束 checkbox，默认勾选）、`cfg-bg-file`+`btn-bg-upload`（背景上传）、`stage`（舞台容器，`data-theme` 属性驱动主题）、`bg-layer`（自定义背景层）、`cam-preview`（摄像头 video）、`btn-record`（语音作答按钮）、`btn-replay`（重听按钮，JS 动态生成）；`window.VoiceEngine`（Task 9）。
 
 - [ ] **Step 1: 重写 index.html**
 
@@ -1281,6 +1282,10 @@ git commit -m "feat: 按风格上传自定义动态背景（内置 CSS 主题的
       <label class="voice-toggle">
         <input type="checkbox" id="cfg-voice">
         语音模式（麦克风作答、面试官语音播报、开启摄像头画面）
+      </label>
+      <label class="voice-toggle">
+        <input type="checkbox" id="cfg-autostop" checked>
+        自动结束作答（检测到停顿约 2 秒自动结束录音；关闭则需手动点击结束）
       </label>
       <label>简历文本<textarea id="cfg-resume" placeholder="粘贴简历，或使用下方文件上传"></textarea></label>
       <label>上传简历文件<input type="file" id="cfg-resume-file" accept=".txt,.md,.pdf"></label>
@@ -1431,7 +1436,7 @@ git commit -m "feat(web): 语音面试界面骨架与四套风格动态主题"
   - `beginSession(sessionId, style)`：启动整场混音 MediaRecorder（5s 切片入内存）；
   - `feedDelta(text)` / `endTurn()`：喂 SSE 增量，按句合成播放；`endTurn` 把本轮音频缓存到 `lastTurnBuffers`；
   - `await replayLastTurn()`：顺序重播上一轮（不进录音）；
-  - `await startAnswer()` / `await stopAnswer() -> Blob`：单段作答录音；
+  - `await startAnswer(opts)`（`opts = {autoStopMs, onAutoStop}`，autoStopMs 省略则纯手动）/ `await stopAnswer() -> Blob`：单段作答录音；开启 autoStopMs 时运行 VAD（100ms 采样，阈值=max(0.5s 基线×3, 0.01)，开口后连续静音 autoStopMs 触发 `onAutoStop()`；引擎回调 `onSpeak()`/`onSilence(quietMs, limitMs)` 供 UI 倒计时）；
   - `await recognize(blob) -> str`：webm Blob → 16k 单声道 WAV → `/api/asr` → 文字；
   - `await finish()`：收尾——flush 句队列、停录制停摄像头、合并 chunks 重试 3 次上传，失败 `alert` 提示。
 
@@ -1459,6 +1464,11 @@ class VoiceEngine {
     this.style = "serious";
     this.sessionId = null;
     this.stopped = false;
+    // VAD 状态（app.js 挂 onSpeak/onSilence 回调做倒计时 UI）
+    this.onSpeak = null;
+    this.onSilence = null;
+    this._vadTimer = null;
+    this._vadAnalyser = null;
   }
 
   async enable() {
@@ -1546,14 +1556,61 @@ class VoiceEngine {
     }
   }
 
-  async startAnswer() {
+  async startAnswer(opts = {}) {
     this.answerChunks = [];
     this.answerRecorder = new MediaRecorder(this.mediaStream);
     this.answerRecorder.ondataavailable = (e) => { if (e.data && e.data.size) this.answerChunks.push(e.data); };
     this.answerRecorder.start();
+    if (opts.autoStopMs) this._startVad(opts.autoStopMs, opts.onAutoStop);
+  }
+
+  // VAD：100ms 采样 RMS；前 5 个采样（0.5s）取最小值当环境噪声基线；
+  // 开口后连续静音达 silenceMs 判定说完。阈值 = max(基线×3, 0.01)。
+  _startVad(silenceMs, onAutoStop) {
+    const analyser = this.ctx.createAnalyser();
+    analyser.fftSize = 512;
+    this.micSource.connect(analyser); // analyser 不接 destination，无回声
+    this._vadAnalyser = analyser;
+    const samples = new Float32Array(analyser.fftSize);
+    const step = 100;
+    const warmupSteps = 5;
+    let tick = 0;
+    let spoke = false;
+    let quietMs = 0;
+    let ambient = Infinity;
+    this._vadTimer = setInterval(() => {
+      analyser.getFloatTimeDomainData(samples);
+      let sum = 0;
+      for (let i = 0; i < samples.length; i++) sum += samples[i] * samples[i];
+      const rms = Math.sqrt(sum / samples.length);
+      tick++;
+      if (tick <= warmupSteps) { ambient = Math.min(ambient, rms); return; }
+      const threshold = Math.max(ambient * 3, 0.01);
+      if (rms > threshold) {
+        if (quietMs > 0 && this.onSpeak) this.onSpeak();
+        spoke = true;
+        quietMs = 0;
+      } else if (spoke) {
+        quietMs += step;
+        if (this.onSilence) this.onSilence(quietMs, silenceMs);
+        if (quietMs >= silenceMs) {
+          this._stopVad();
+          onAutoStop();
+        }
+      }
+    }, step);
+  }
+
+  _stopVad() {
+    if (this._vadTimer) { clearInterval(this._vadTimer); this._vadTimer = null; }
+    if (this._vadAnalyser) {
+      try { this.micSource.disconnect(this._vadAnalyser); } catch (e) { /* 已断开 */ }
+      this._vadAnalyser = null;
+    }
   }
 
   stopAnswer() {
+    this._stopVad();
     return new Promise((resolve) => {
       this.answerRecorder.onstop = () => resolve(new Blob(this.answerChunks, { type: "audio/webm" }));
       this.answerRecorder.stop();
@@ -1588,6 +1645,7 @@ class VoiceEngine {
     if (this.stopped) return;
     this.stopped = true;
     this.endTurn();
+    this._stopVad();
     await new Promise((resolve) => {
       if (!this.mixRecorder || this.mixRecorder.state === "inactive") return resolve();
       this.mixRecorder.onstop = () => resolve();
@@ -1934,33 +1992,49 @@ function sendAnswer() {
   }).catch((e) => addChat("system", "发送失败：" + e.message));
 }
 
+async function stopAnswerAndRecognize() {
+  const btn = $("btn-record");
+  btn.classList.remove("recording");
+  btn.disabled = true;
+  btn.textContent = "识别中…";
+  try {
+    const blob = await voice.stopAnswer();
+    const text = await voice.recognize(blob);
+    if (text) {
+      $("answer-input").value = text;
+      $("answer-input").focus(); // 识别结果可修正后发送，错字不直接进记录
+    } else {
+      addChat("system", "没听清，请重说或改用打字");
+    }
+  } catch (e) {
+    addChat("system", "语音识别失败：" + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "🎤 开始作答";
+  }
+}
+
 async function toggleRecording() {
   const btn = $("btn-record");
   if (!voice) return;
   if (btn.classList.contains("recording")) {
-    btn.classList.remove("recording");
-    btn.disabled = true;
-    btn.textContent = "识别中…";
-    try {
-      const blob = await voice.stopAnswer();
-      const text = await voice.recognize(blob);
-      if (text) {
-        $("answer-input").value = text;
-        $("answer-input").focus(); // 识别结果可修正后发送，错字不直接进记录
-      } else {
-        addChat("system", "没听清，请重说或改用打字");
-      }
-    } catch (e) {
-      addChat("system", "语音识别失败：" + e.message);
-    } finally {
-      btn.disabled = false;
-      btn.textContent = "🎤 开始作答";
-    }
-  } else {
-    btn.classList.add("recording");
-    btn.textContent = "⏹ 结束作答";
-    await voice.startAnswer();
+    await stopAnswerAndRecognize(); // 手动结束（VAD 开启时同样走这条路）
+    return;
   }
+  btn.classList.add("recording");
+  btn.textContent = "⏹ 结束作答";
+  const autoStop = $("cfg-autostop").checked;
+  if (autoStop) {
+    voice.onSpeak = () => { btn.textContent = "⏹ 结束作答（正在听…）"; };
+    voice.onSilence = (quietMs, limitMs) => {
+      const left = Math.ceil((limitMs - quietMs) / 1000);
+      btn.textContent = `⏹ 停顿中…${left}s 后自动结束，继续说即取消`;
+    };
+  }
+  await voice.startAnswer(autoStop ? {
+    autoStopMs: 2000,
+    onAutoStop: () => { if (btn.classList.contains("recording")) stopAnswerAndRecognize(); },
+  } : {});
 }
 
 async function endInterview() {
@@ -2172,7 +2246,7 @@ Expected: 全部 PASS（前端改动不影响后端）。
 用 Task 8 Step 4 方式起服务（真实 `.env`：`INTERVIEW_PROVIDER=dashscope DASHSCOPE_API_KEY=... INTERVIEW_WEB_TOKEN=t`），浏览器打开：
 
 1. 无 key/未配置：勾选语音模式开始 → 录音停止后提示"语音识别失败…（语音功能未启用）"或开始时即提示；文本面试完全正常——确认降级；
-2. 有 key：选择"温和"，勾选语音模式，授权摄像头+麦克风 → 开始面试：摄像头小窗出现、面试官开场白逐句播放语音、stage 呈暖色主题；点 🎤 说一句话再点 ⏹ → 输入框回填识别文字 → 回车发送 → 下一题语音播报；点"🔊 重听"重复播上一轮；点"结束面试" → done 后 `interviews/local/<sid>/audio/interview.webm` 生成且可播放；历史页该场显示"音频✓"，详情页有 `<audio>` 播放器能出声（含双方声音）；
+2. 有 key：选择"温和"，勾选语音模式，授权摄像头+麦克风 → 开始面试：摄像头小窗出现、面试官开场白逐句播放语音、stage 呈暖色主题；点 🎤 说一句话后停顿 → 按钮出现"停顿中…Ns 后自动结束"倒计时 → 静音 2 秒自动结束 → 输入框回填识别文字 → 回车发送 → 下一题语音播报；再测：说话中点击 ⏹ 手动结束可用；取消勾选"自动结束作答"后退回纯手动；点"🔊 重听"重复播上一轮；点"结束面试" → done 后 `interviews/local/<sid>/audio/interview.webm` 生成且可播放；历史页该场显示"音频✓"，详情页有 `<audio>` 播放器能出声（含双方声音）；
 3. 背景覆盖：上传一个 gif → stage 背景变为该 gif（半透明叠加），换风格再上传另一个 → 各自生效。
 
 无法授权真实设备的 CI/无头环境：改用 Chrome 启动参数 `--use-fake-device-for-media-stream --autoplay-policy=no-user-gesture-required` 配合 browser-use 技能完成第 2 步；仍不可行时把第 2 步标注"待用户真机验证"并在交付说明中列出手动步骤。
@@ -2227,7 +2301,7 @@ git commit -m "feat(web): 语音面试前端集成——风格切换、语音作
 - **选择面试官风格**：严肃（默认）/ 冷漠 / 温和 / 引导——同时决定动态背景、面试官提问人设与语音音色；
   每种风格还可上传自定义动态背景（gif/mp4/webm/png）覆盖内置动画；
 - **勾选语音模式**：浏览器授权麦克风+摄像头后——
-  - 点「🎤 开始作答」说话，再点「⏹ 结束作答」，语音识别为文字回填输入框，确认/修正后回车发送；
+  - 点「🎤 开始作答」说话；默认开启自动结束（检测到停顿约 2 秒倒计时后自动结束并识别，继续说即取消；配置面板可关，关闭后点「⏹ 结束作答」手动结束），识别为文字回填输入框，确认/修正后回车发送；
   - 面试官每句话自动语音播报，听不清点消息下方「🔊 重听」（也可直接看文字）；
   - 摄像头画面仅本地实时预览，不录制不存储；
   - 整场面试（双方声音混音）录制为一个 `audio/interview.webm`，保存在本场会话目录 `audio/` 下，
@@ -2259,6 +2333,6 @@ git commit -m "docs: Web 端语音/视频面试使用说明"
 
 ## Self-Review 记录
 
-- **Spec 覆盖**：风格系统（T1-3）、人设+音色（T1/T2/T5，音色三级可配置收敛到单音色）、ASR/TTS（T4/T5，TTS 模型/音色走 `INTERVIEW_TTS_MODEL`/`INTERVIEW_TTS_VOICE[_<STYLE>]`）、整场音频单文件存储+audio/ 目录（T6/T9）、文字存储不变（T2 仅加 meta.style）、摄像头仅预览（T8/T9/T10，无任何 video 上传端点）、自定义背景（T7/T8/T10）、CSS 四主题（T8）、重听（T9/T10）、历史回放（T6/T10）、降级（T5/T10）、README（T11）——均有对应任务。
+- **Spec 覆盖**：风格系统（T1-3）、人设+音色（T1/T2/T5，音色三级可配置收敛到单音色）、ASR/TTS（T4/T5，TTS 模型/音色走 `INTERVIEW_TTS_MODEL`/`INTERVIEW_TTS_VOICE[_<STYLE>]`）、VAD 自动结束作答（T8 开关 UI、T9 引擎、T10 倒计时接线）、整场音频单文件存储+audio/ 目录（T6/T9）、文字存储不变（T2 仅加 meta.style）、摄像头仅预览（T8/T9/T10，无任何 video 上传端点）、自定义背景（T7/T8/T10）、CSS 四主题（T8）、重听（T9/T10）、历史回放（T6/T10）、降级（T5/T10）、README（T11）——均有对应任务。
 - **类型一致性**：`get_style/list_styles/style_keys/resolve_voice`、`AudioService(engine)/from_config(api_key, tts_model)`、`DashScopeEngine(api_key, tts_model)`、`ASR_FORMATS`、`save_session_audio(session_dir, data)`、`has_audio`、`create_app(config, llm, audio)`、`VoiceEngine` 方法名在各任务间已逐一核对一致。
 - **占位符**：无 TBD/TODO；自审修正过三处——Task 8 CSS 笔误行删除、Task 5 ASR 格式校验直接写入端点代码（import 补 `ASR_FORMATS`）、Task 4 fake 注入测试改为参数化 `install_fake_dashscope(monkeypatch, asr_cls=..., synth_cls=...)`；另按"账号可能只有单一音色"的约束补充音色/模型三级配置（T1 `resolve_voice`、T4 config+engine、T5 端点解析与覆盖测试、T11 env 示例）。所有代码块为可直接落盘的完整内容。
