@@ -14,6 +14,7 @@
 
 - Python `>=3.11`；新依赖只允许新增 `dashscope`（pyproject 主依赖）。
 - 风格 key 白名单：`serious` / `cold` / `gentle` / `guide`，默认 `serious`；未知 key 一律回落 `serious`。
+- TTS 音色三级优先：`INTERVIEW_TTS_VOICE_<STYLE>`（按风格）> `INTERVIEW_TTS_VOICE`（全局）> persona 内置默认；TTS 模型 `INTERVIEW_TTS_MODEL` 默认 `cosyvoice-v2`。单音色账号只配全局音色即可，风格差异靠背景/人设/语速保留。
 - 音频留档**只有一个文件**：`interviews/<user_id>/<session_id>/audio/interview.webm`（整场混音）。ASR/TTS 中间数据不落档（ASR 临时文件识别后立即删除）。
 - 文字记录维持 `transcript.jsonl` 不变，仅 meta 行新增 `style` 字段；不改动对话行的结构。
 - 摄像头视频不录制、不存储。
@@ -38,13 +39,13 @@
 - Test: `tests/test_persona.py`
 
 **Interfaces:**
-- Produces: `PersonaStyle`（frozen dataclass：`key: str, label: str, prompt_fragment: str, tts_voice: str, tts_speed: float`）；`get_style(key: str) -> PersonaStyle`（未知回落 serious）；`list_styles() -> list[PersonaStyle]`（固定顺序 serious/cold/gentle/guide）；`style_keys() -> set[str]`。后续所有任务 import 自 `interview_agent.persona`。
+- Produces: `PersonaStyle`（frozen dataclass：`key: str, label: str, prompt_fragment: str, tts_voice: str, tts_speed: float`）；`get_style(key: str) -> PersonaStyle`（未知回落 serious）；`list_styles() -> list[PersonaStyle]`（固定顺序 serious/cold/gentle/guide）；`style_keys() -> set[str]`；`resolve_voice(style_key: str, global_voice: str = "", style_voices: dict[str, str] | None = None) -> str`（优先级：style_voices[key] > global_voice > 内置默认）。后续所有任务 import 自 `interview_agent.persona`。
 
 - [ ] **Step 1: 写失败测试**
 
 ```python
 # tests/test_persona.py
-from interview_agent.persona import get_style, list_styles, style_keys
+from interview_agent.persona import get_style, list_styles, resolve_voice, style_keys
 
 
 def test_four_styles_in_order():
@@ -64,6 +65,14 @@ def test_style_fields_complete():
 
 def test_style_keys_matches_list():
     assert style_keys() == {s.key for s in list_styles()}
+
+
+def test_resolve_voice_priority():
+    assert resolve_voice("cold") == "longyingjing"                    # 内置默认
+    assert resolve_voice("cold", "my-only-voice") == "my-only-voice"  # 全局覆盖
+    assert resolve_voice("cold", "my-only-voice", {"cold": "special"}) == "special"  # 按风格覆盖最高
+    assert resolve_voice("serious", "my-only-voice") == "my-only-voice"  # 全局对任意风格生效
+    assert resolve_voice("guide", "", {"serious": "x"}) == "longxiaochun_v2"  # 无关覆盖不生效
 ```
 
 - [ ] **Step 2: 运行确认失败**
@@ -133,6 +142,17 @@ def get_style(key: str) -> PersonaStyle:
     return STYLES.get(key, STYLES[DEFAULT_KEY])
 
 
+def resolve_voice(style_key: str, global_voice: str = "",
+                  style_voices: dict[str, str] | None = None) -> str:
+    """音色三级优先：按风格覆盖 > 全局覆盖 > 内置默认。
+
+    单音色账号只需配置全局 INTERVIEW_TTS_VOICE，四种风格共用，
+    风格差异仍由背景、人设与语速保留。
+    """
+    style_voices = style_voices or {}
+    return style_voices.get(style_key) or global_voice or get_style(style_key).tts_voice
+
+
 def list_styles() -> list[PersonaStyle]:
     return [STYLES[k] for k in _ORDER]
 
@@ -144,7 +164,7 @@ def style_keys() -> set[str]:
 - [ ] **Step 4: 运行确认通过**
 
 Run: `python -m pytest tests/test_persona.py -v`
-Expected: 4 PASS
+Expected: 8 PASS
 
 - [ ] **Step 5: 回写 spec 勘误并提交**
 
@@ -440,8 +460,8 @@ git commit -m "feat: Web 端开始面试支持选择面试官风格"
 - Test: `tests/test_web_audio_service.py`
 
 **Interfaces:**
-- Produces: `AudioError(Exception)`；`DashScopeEngine(api_key)`（`.transcribe_file(path, fmt="wav") -> str`、`.synthesize(text, voice, speed) -> bytes`，dashscope 延迟 import）；`AudioService(engine)`（`.transcribe(audio_bytes, fmt="wav") -> str`、`.synthesize(text, voice, speed) -> bytes`、`.available` 属性恒 True）；`AudioService.from_config(api_key: str) -> AudioService | None`（空 key 返回 None）。Task 5 的端点与 `__main__.py` 装配消费这些签名。
-- config 新键：`cfg["dashscope_api_key"]`（独立于 INTERVIEW_PROVIDER，DeepSeek LLM + DashScope 语音可并用）。
+- Produces: `AudioError(Exception)`；`DashScopeEngine(api_key, tts_model="cosyvoice-v2")`（`.transcribe_file(path, fmt="wav") -> str`、`.synthesize(text, voice, speed) -> bytes`，dashscope 延迟 import，合成用构造传入的模型名）；`AudioService(engine)`（`.transcribe(audio_bytes, fmt="wav") -> str`、`.synthesize(text, voice, speed) -> bytes`、`.available` 属性恒 True）；`AudioService.from_config(api_key: str, tts_model: str = "cosyvoice-v2") -> AudioService | None`（空 key 返回 None）。Task 5 的端点与 `__main__.py` 装配消费这些签名。
+- config 新键：`cfg["dashscope_api_key"]`（独立于 INTERVIEW_PROVIDER，DeepSeek LLM + DashScope 语音可并用）、`cfg["tts_model"]`（默认 `cosyvoice-v2`）、`cfg["tts_voice"]`（默认空=用内置四音色）、`cfg["tts_voice_by_style"]`（扫描 `INTERVIEW_TTS_VOICE_*` 环境变量得到的 `{style_key_lower: voice}`，如 `INTERVIEW_TTS_VOICE_SERIOUS=x` → `{"serious": "x"}`；注意 `INTERVIEW_TTS_VOICE` 本身不入此 dict）。
 
 - [ ] **Step 1: 写失败测试（fake dashscope 模块注入，不触网）**
 
@@ -508,10 +528,11 @@ def test_engine_transcribe_joins_sentences(tmp_path, monkeypatch):
 
 def test_engine_synthesize(tmp_path, monkeypatch):
     install_fake_dashscope(monkeypatch)
-    engine = DashScopeEngine("sk-test")
+    engine = DashScopeEngine("sk-test", tts_model="my-tts-model")
     assert engine.synthesize("文本", "longshu_v2", 1.0) == b"FAKEMP3"
     assert FakeSynthesizer.last_kwargs["voice"] == "longshu_v2"
     assert FakeSynthesizer.last_kwargs["speech_rate"] == 1.0
+    assert FakeSynthesizer.last_kwargs["model"] == "my-tts-model"
 
 
 def test_service_transcribe_cleans_temp_file(tmp_path, monkeypatch):
@@ -535,6 +556,19 @@ def test_service_wraps_unexpected_errors(tmp_path, monkeypatch):
 def test_from_config_empty_key_is_none():
     assert AudioService.from_config("") is None
     assert AudioService.from_config("sk-x") is not None
+
+
+def test_load_config_tts_keys(tmp_path, monkeypatch):
+    from interview_agent.config import load_config
+    env = tmp_path / ".env"
+    env.write_text("", encoding="utf-8")
+    monkeypatch.setenv("INTERVIEW_TTS_MODEL", "cosyvoice-v1")
+    monkeypatch.setenv("INTERVIEW_TTS_VOICE", "single-voice")
+    monkeypatch.setenv("INTERVIEW_TTS_VOICE_SERIOUS", "serious-voice")
+    cfg = load_config(str(env))
+    assert cfg["tts_model"] == "cosyvoice-v1"
+    assert cfg["tts_voice"] == "single-voice"
+    assert cfg["tts_voice_by_style"] == {"serious": "serious-voice"}
 ```
 
 - [ ] **Step 2: 运行确认失败**
@@ -565,9 +599,10 @@ class AudioError(Exception):
 class DashScopeEngine:
     """dashscope SDK 薄封装，方便测试注入 fake 模块。"""
 
-    def __init__(self, api_key: str):
+    def __init__(self, api_key: str, tts_model: str = "cosyvoice-v2"):
         import dashscope
         dashscope.api_key = api_key
+        self.tts_model = tts_model
 
     def transcribe_file(self, path: Path, fmt: str = "wav") -> str:
         from dashscope.audio.asr import Recognition
@@ -584,7 +619,7 @@ class DashScopeEngine:
     def synthesize(self, text: str, voice: str, speed: float = 1.0) -> bytes:
         from dashscope.audio.tts_v2 import AudioFormat, SpeechSynthesizer
         synth = SpeechSynthesizer(
-            model="cosyvoice-v2", voice=voice,
+            model=self.tts_model, voice=voice,
             format=AudioFormat.MP3_22050HZ_MONO_256KBPS,
             speech_rate=speed,
         )
@@ -602,8 +637,8 @@ class AudioService:
         self.available = True
 
     @classmethod
-    def from_config(cls, api_key: str) -> "AudioService | None":
-        return cls(DashScopeEngine(api_key)) if api_key else None
+    def from_config(cls, api_key: str, tts_model: str = "cosyvoice-v2") -> "AudioService | None":
+        return cls(DashScopeEngine(api_key, tts_model=tts_model)) if api_key else None
 
     def transcribe(self, audio_bytes: bytes, fmt: str = "wav") -> str:
         if fmt not in ASR_FORMATS:
@@ -636,6 +671,15 @@ class AudioService:
 
 ```python
         "dashscope_api_key": os.environ.get("DASHSCOPE_API_KEY", ""),
+        "tts_model": os.environ.get("INTERVIEW_TTS_MODEL", "cosyvoice-v2"),
+        "tts_voice": os.environ.get("INTERVIEW_TTS_VOICE", ""),
+        # INTERVIEW_TTS_VOICE_<STYLE>（如 _SERIOUS）按风格覆盖；前缀恰好等于
+        # INTERVIEW_TTS_VOICE 的全局键本身（无后缀）不在此 dict 中
+        "tts_voice_by_style": {
+            k[len("INTERVIEW_TTS_VOICE_"):].lower(): v
+            for k, v in os.environ.items()
+            if k.startswith("INTERVIEW_TTS_VOICE_") and v
+        },
 ```
 
 - [ ] **Step 4: 安装依赖并运行确认通过**
@@ -660,8 +704,8 @@ git commit -m "feat: DashScope 语音服务（Paraformer 识别 + CosyVoice 合�
 - Test: `tests/test_web_audio_api.py`
 
 **Interfaces:**
-- Consumes: `AudioService/AudioError/ASR_FORMATS`（Task 4）；`persona.get_style`（Task 1）
-- Produces: `create_app(config, llm=None, audio=None)`（第三参默认 None，旧调用不破坏）；`POST /api/asr`（multipart：`file` 文件 + `fmt` 表单，默认 wav）→ `{"text": str}`，音频未启用 404、格式/大小非法 400、SDK 失败 502；`POST /api/tts`（JSON `{text, style}`）→ `audio/mpeg` 二进制响应，错误码同上、空文本/超 500 字 400。前端 Task 9 消费这两个契约。
+- Consumes: `AudioService/AudioError/ASR_FORMATS`（Task 4）；`persona.get_style/resolve_voice`（Task 1）
+- Produces: `create_app(config, llm=None, audio=None)`（第三参默认 None，旧调用不破坏）；`POST /api/asr`（multipart：`file` 文件 + `fmt` 表单，默认 wav）→ `{"text": str}`，音频未启用 404、格式/大小非法 400、SDK 失败 502；`POST /api/tts`（JSON `{text, style}`）→ `audio/mpeg` 二进制响应，错误码同上、空文本/超 500 字 400。TTS 音色按三级优先解析：`config["tts_voice_by_style"][style]` > `config["tts_voice"]` > persona 内置默认（语速仍取 persona 的 `tts_speed`）。前端 Task 9 消费这两个契约。
 
 - [ ] **Step 1: 写失败测试**
 
@@ -708,11 +752,13 @@ class FakeEngine:
         return b"MP3BYTES"
 
 
-def make_client(tmp_path, engine=None):
+def make_client(tmp_path, engine=None, extra_cfg=None):
     cfg = {
         "session_root": str(tmp_path), "min_questions": 1, "language": "zh",
         "model": "deepseek-chat", "web_token": "secret",
     }
+    if extra_cfg:
+        cfg.update(extra_cfg)
     llm = AppLLM([AssistantTurn(content="开场")])
     audio = None
     if engine is not None:
@@ -745,6 +791,24 @@ def test_tts_roundtrip_resolves_style_voice(tmp_path):
     assert r.headers["content-type"].startswith("audio/mpeg")
     assert r.content == b"MP3BYTES"
     assert eng.calls == [("tts", "你好。", "longyingjing", 0.95)]
+
+
+def test_tts_voice_overrides(tmp_path):
+    # 单音色账号：全局 INTERVIEW_TTS_VOICE 对所有风格生效，语速仍按风格
+    eng = FakeEngine()
+    c = make_client(tmp_path, engine=eng, extra_cfg={"tts_voice": "single-voice"})
+    login(c)
+    c.post("/api/tts", json={"text": "你好。", "style": "cold"})
+    assert eng.calls[-1] == ("tts", "你好。", "single-voice", 0.95)
+    # 按风格覆盖优先于全局
+    eng2 = FakeEngine()
+    c2 = make_client(tmp_path, engine=eng2, extra_cfg={
+        "tts_voice": "single-voice", "tts_voice_by_style": {"serious": "serious-voice"}})
+    login(c2)
+    c2.post("/api/tts", json={"text": "你好。", "style": "serious"})
+    assert eng2.calls[-1][2] == "serious-voice"
+    c2.post("/api/tts", json={"text": "你好。", "style": "guide"})
+    assert eng2.calls[-1][2] == "single-voice"
 
 
 def test_tts_text_limits(tmp_path):
@@ -795,7 +859,7 @@ Expected: FAIL（`create_app` 无 `audio` 参数 / 端点 404）
 
 ```python
 from fastapi import FastAPI, Form, HTTPException, Request, Response, UploadFile, File
-from ..persona import get_style
+from ..persona import get_style, resolve_voice
 from .audio import ASR_FORMATS, AudioError
 ```
 
@@ -827,8 +891,13 @@ from .audio import ASR_FORMATS, AudioError
         if not text or len(text) > 500:
             raise HTTPException(400, "文本为空或超过 500 字")
         style = get_style(str(payload.get("style", "")))
+        voice = resolve_voice(
+            style.key,
+            config.get("tts_voice", ""),
+            config.get("tts_voice_by_style") or None,
+        )
         try:
-            mp3 = audio.synthesize(text, style.tts_voice, style.tts_speed)
+            mp3 = audio.synthesize(text, voice, style.tts_speed)
         except AudioError as e:
             raise HTTPException(502, str(e))
         return Response(content=mp3, media_type="audio/mpeg")
@@ -841,7 +910,10 @@ from .audio import ASR_FORMATS, AudioError
 ```python
 from .audio import AudioService
 ...
-    app = create_app(cfg, llm=llm, audio=AudioService.from_config(cfg.get("dashscope_api_key", "")))
+    app = create_app(
+        cfg, llm=llm,
+        audio=AudioService.from_config(cfg.get("dashscope_api_key", ""), tts_model=cfg.get("tts_model", "cosyvoice-v2")),
+    )
 ```
 
 - [ ] **Step 4: 运行确认通过（含回归）**
@@ -2125,17 +2197,26 @@ git commit -m "feat(web): 语音面试前端集成——风格切换、语音作
 
 - [ ] **Step 1: 更新 .env.example**
 
-在 `# 方案 B：阿里云百炼` 注释块下追加一行注释（不改变现有行）：
+在 `# 方案 B：阿里云百炼` 注释块下追加（不改变现有行）：
 
 ```bash
 # 语音面试（Web 端语音模式）：需 DashScope key，与 LLM 提供商无关，
 # DeepSeek 做对话 + DASHSCOPE_API_KEY 做语音识别/合成 可同时使用。
 # DASHSCOPE_API_KEY=sk-请替换
+# TTS 模型与音色（可选）：账号只有单一音色时配置 INTERVIEW_TTS_VOICE 即可，
+# 四种风格共用该音色，风格差异由背景/人设/语速保留
+# INTERVIEW_TTS_MODEL=cosyvoice-v2
+# INTERVIEW_TTS_VOICE=
+# 按风格单独覆盖（可选，优先级高于全局）：
+# INTERVIEW_TTS_VOICE_SERIOUS=
+# INTERVIEW_TTS_VOICE_COLD=
+# INTERVIEW_TTS_VOICE_GENTLE=
+# INTERVIEW_TTS_VOICE_GUIDE=
 ```
 
 - [ ] **Step 2: 更新 README「Web 界面」节**
 
-在现有 Web 说明段落后追加：
+在现有 Web 说明段落后追加（含音色受限说明）：
 
 ```markdown
 ### 语音/视频面试（语音模式）
@@ -2151,6 +2232,10 @@ git commit -m "feat(web): 语音面试前端集成——风格切换、语音作
   - 摄像头画面仅本地实时预览，不录制不存储；
   - 整场面试（双方声音混音）录制为一个 `audio/interview.webm`，保存在本场会话目录 `audio/` 下，
     与 `transcript.jsonl` 文字记录同目录；历史页标记「音频✓」并可回放。
+
+**账号音色受限时**：默认四风格各用一个音色（cosyvoice-v2）；若你的百炼账号/模型只有单一音色，
+配置 `INTERVIEW_TTS_VOICE=可用音色` 即可让四风格共用，风格差异仍由背景、人设、语速保留；
+也可用 `INTERVIEW_TTS_MODEL` 更换 TTS 模型、`INTERVIEW_TTS_VOICE_<风格>` 按风格指定。
 
 未配置 DashScope key 时语音功能自动禁用，文本面试不受影响。建议佩戴耳机，
 否则回放中面试官声音会因麦克风拾到扬声器而有轻微重叠。
@@ -2174,6 +2259,6 @@ git commit -m "docs: Web 端语音/视频面试使用说明"
 
 ## Self-Review 记录
 
-- **Spec 覆盖**：风格系统（T1-3）、人设+音色（T1/T2/T5）、ASR/TTS（T4/T5）、整场音频单文件存储+audio/ 目录（T6/T9）、文字存储不变（T2 仅加 meta.style）、摄像头仅预览（T8/T9/T10，无任何 video 上传端点）、自定义背景（T7/T8/T10）、CSS 四主题（T8）、重听（T9/T10）、历史回放（T6/T10）、降级（T5/T10）、README（T11）——均有对应任务。
-- **类型一致性**：`get_style/list_styles/style_keys`、`AudioService(engine)/from_config`、`ASR_FORMATS`、`save_session_audio(session_dir, data)`、`has_audio`、`create_app(config, llm, audio)`、`VoiceEngine` 方法名在各任务间已逐一核对一致。
-- **占位符**：无 TBD/TODO；自审修正过三处——Task 8 CSS 笔误行删除、Task 5 ASR 格式校验直接写入端点代码（import 补 `ASR_FORMATS`）、Task 4 fake 注入测试改为参数化 `install_fake_dashscope(monkeypatch, asr_cls=..., synth_cls=...)`。所有代码块为可直接落盘的完整内容。
+- **Spec 覆盖**：风格系统（T1-3）、人设+音色（T1/T2/T5，音色三级可配置收敛到单音色）、ASR/TTS（T4/T5，TTS 模型/音色走 `INTERVIEW_TTS_MODEL`/`INTERVIEW_TTS_VOICE[_<STYLE>]`）、整场音频单文件存储+audio/ 目录（T6/T9）、文字存储不变（T2 仅加 meta.style）、摄像头仅预览（T8/T9/T10，无任何 video 上传端点）、自定义背景（T7/T8/T10）、CSS 四主题（T8）、重听（T9/T10）、历史回放（T6/T10）、降级（T5/T10）、README（T11）——均有对应任务。
+- **类型一致性**：`get_style/list_styles/style_keys/resolve_voice`、`AudioService(engine)/from_config(api_key, tts_model)`、`DashScopeEngine(api_key, tts_model)`、`ASR_FORMATS`、`save_session_audio(session_dir, data)`、`has_audio`、`create_app(config, llm, audio)`、`VoiceEngine` 方法名在各任务间已逐一核对一致。
+- **占位符**：无 TBD/TODO；自审修正过三处——Task 8 CSS 笔误行删除、Task 5 ASR 格式校验直接写入端点代码（import 补 `ASR_FORMATS`）、Task 4 fake 注入测试改为参数化 `install_fake_dashscope(monkeypatch, asr_cls=..., synth_cls=...)`；另按"账号可能只有单一音色"的约束补充音色/模型三级配置（T1 `resolve_voice`、T4 config+engine、T5 端点解析与覆盖测试、T11 env 示例）。所有代码块为可直接落盘的完整内容。

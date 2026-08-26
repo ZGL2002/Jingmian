@@ -20,7 +20,7 @@
 | ASR/TTS 供应商 | 阿里云百炼 DashScope（Paraformer 录音文件识别 + CosyVoice 合成），与现有 DashScope LLM provider 共用 `DASHSCOPE_API_KEY` |
 | 背景素材 | 内置 CSS 动画主题为默认 + 支持按风格上传自定义 GIF/视频覆盖 |
 | 摄像头 | 仅实时预览，不录制 |
-| 风格作用 | 同时影响：动态背景、注入系统提示词的面试官人设、TTS 音色/语速 |
+| 风格作用 | 同时影响：动态背景、注入系统提示词的面试官人设、TTS 音色/语速（音色可用环境变量收敛为单一，见"音色与 TTS 模型可配置"） |
 | 音频存储 | 浏览器整场混音连续录制，结束时上传一个完整文件到 `audio/`；ASR/TTS 中间数据不落档 |
 | 文字存储 | 维持 `transcript.jsonl` 不变 |
 
@@ -60,7 +60,15 @@ def list_styles() -> list[PersonaStyle]
 
 四种风格的人设方向：严肃=追问犀利、节奏紧凑；冷漠=简短克制、不鼓励不寒暄；温和=友好包容、多给肯定；引导=循循诱导、给提示拆解问题。
 
-音色初值：严肃=`longcheng`（沉稳男声）、冷漠=`longshu`（冷静）、温和=`longwan`（亲和女声）、引导=`longxiaochun`（明亮）；实现阶段在沙箱 key 上验证音色名可用性，不可用则替换为同风格取向的可用音色并在代码注释中记录。
+音色初值：严肃=`longshu_v2`（沉稳青年男）、冷漠=`longyingjing`（低调冷静女）、温和=`longyingling`（温和共情女）、引导=`longxiaochun_v2`（知性积极女）。
+
+音色与 TTS 模型可配置（应对账号只有单一音色/模型受限的情况）：
+
+- `INTERVIEW_TTS_MODEL`：TTS 模型名，默认 `cosyvoice-v2`；
+- `INTERVIEW_TTS_VOICE`：全局音色，设置后四种风格共用（背景/人设/语速仍按风格区分）；
+- `INTERVIEW_TTS_VOICE_SERIOUS` / `_COLD` / `_GENTLE` / `_GUIDE`：按风格单独覆盖。
+
+音色解析优先级：每风格覆盖 > 全局覆盖 > 内置默认（`persona.resolve_voice(style_key, global_voice, style_voices)`）。
 
 ### 2. `interview_agent/web/audio.py` — DashScope 语音服务
 
