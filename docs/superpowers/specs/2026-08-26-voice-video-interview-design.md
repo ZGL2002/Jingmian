@@ -54,7 +54,7 @@ class PersonaStyle:
     tts_voice: str      # CosyVoice 音色名
     tts_speed: float    # 语速
 
-def get_style(key: str) -> PersonaStyle  # 未知 key 回落默认（温和）
+def get_style(key: str) -> PersonaStyle  # 未知 key 回落默认（严肃）
 def list_styles() -> list[PersonaStyle]
 ```
 
@@ -92,7 +92,7 @@ class AudioService:
 
 ### 4. 风格参数流转
 
-- `POST /api/session/start` 新增 `style` 表单字段 → `SessionManager.start_session(style=...)` → `SessionConfig` 新增 `style: str = "gentle"` 字段。
+- `POST /api/session/start` 新增 `style` 表单字段 → `SessionManager.start_session(style=...)` → `SessionConfig` 新增 `style: str = "serious"` 字段（默认严肃）。
 - `InterviewSession.start()` 调 `build_system_prompt(..., persona=get_style(style).prompt_fragment)`，把人设片段拼进系统提示词；`prompt.md` 自然携带。
 - `init_transcript` 头部记录 `style`，历史回放可还原背景主题。
 - TTS 音色：前端持有所选风格，`/api/tts` 由服务端按 `style` 解析音色/语速（避免前端硬编码音色名）。
@@ -100,7 +100,7 @@ class AudioService:
 ### 5. 前端（`static/` 扩展）
 
 **开始面板**：
-- "面试官风格"四选一（默认温和）；
+- "面试官风格"四选一（默认严肃）；
 - "语音模式"复选框：勾选后开始面试前先请求麦克风+摄像头权限，失败则提示并可退回文本模式。
 
 **面试页（语音模式）**：
@@ -110,6 +110,8 @@ class AudioService:
 - 整场录制：`AudioContext` 把 TTS 音频同时接 `destination`（扬声器）与 `MediaStreamDestination`（录制），与麦克风流合并为一条 `MediaStream`，`MediaRecorder` 每 5 秒切片缓存在内存；面试结束（done 事件或点结束）后合并 Blob 一次上传。
 
 **面试官语音**：SSE `delta` 文本按句末标点（。？！；.?!）切分，每凑满一句调 `/api/tts` 并顺序播放（播放队列，避免重叠）；TTS 失败静默降级为纯文字，不打断面试。
+
+**没听清（重听）**：最近一条面试官消息带"重听"按钮——面试官文字始终显示在屏幕上兜底；按钮优先重播前端缓存的该轮 TTS 音频（不调 API）；缓存丢失（如刷新恢复会话）则按该轮文字重新请求 `/api/tts` 再播。不把"没听清"作为回答发给 LLM，避免污染面试记录。
 
 **历史/报告回放**：会话详情页若有 `audio/interview.webm` 则展示 `<audio controls>`。
 
