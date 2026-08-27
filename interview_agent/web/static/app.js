@@ -1,7 +1,7 @@
 const $ = (id) => document.getElementById(id);
 let currentSessionId = null;
 let currentStyle = "serious";
-let voice = null;            // VoiceEngine 实例，语音模式开启时非空
+let voice = null;            // LiveVoiceEngine 实例，语音模式开启时非空
 let pendingBox = null;
 let pendingBuf = "";
 let lastInterviewerBox = null;
@@ -38,7 +38,6 @@ function setControls(on) {
   $("answer-input").disabled = !on;
   $("btn-send").disabled = !on;
   $("btn-end").disabled = !on;
-  $("btn-record").disabled = !on || !voice;
 }
 
 function setThinking(on) {
@@ -80,6 +79,24 @@ function attachReplayButton(box) {
   btn.textContent = "🔊 重听";
   btn.onclick = () => voice.replayLastTurn().catch((e) => console.warn(e));
   box.appendChild(btn);
+}
+
+function setVoiceState(s) {
+  const el = $("voice-status");
+  if (!voice) { el.classList.add("hidden"); return; }
+  el.classList.remove("hidden");
+  el.textContent = s === "speaking" ? "🔊 面试官说话中（可直接开口打断）" : "🎙 实时聆听中（直接说话即可）";
+}
+
+function showCaption(text) {
+  const el = $("live-caption");
+  if (!voice) { el.classList.add("hidden"); return; }
+  if (text) {
+    el.textContent = text;
+    el.classList.remove("hidden");
+  } else {
+    el.classList.add("hidden");
+  }
 }
 
 function applyTheme(style) {
@@ -195,17 +212,28 @@ async function startInterview() {
   $("start-error").textContent = "";
   if (voice) { await voice.finish(); voice = null; } // 上一场语音收尾
   if ($("cfg-voice").checked) {
-    voice = new VoiceEngine();
+    voice = new LiveVoiceEngine();
+    voice.onCaption = showCaption;
+    voice.onState = setVoiceState;
+    voice.onSubmit = (text) => {
+      // 识别攒句完成，自动作为回答发送（错字靠字幕口头更正）
+      addChat("candidate", text);
+      api("/api/answer", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ session_id: currentSessionId, text }),
+      }).catch((e) => addChat("system", "发送失败：" + e.message));
+    };
     try {
       await voice.enable();
     } catch (e) {
       voice = null;
+      setVoiceState(null);
+      showCaption("");
       $("start-error").textContent = "无法获取麦克风/摄像头：" + e.message + "（可取消勾选语音模式，用文本面试）";
       return;
     }
-    $("btn-record").classList.remove("hidden");
   } else {
-    $("btn-record").classList.add("hidden");
     $("cam-preview").classList.add("hidden");
   }
   applyTheme(currentStyle);
@@ -245,51 +273,6 @@ function sendAnswer() {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ session_id: currentSessionId, text }),
   }).catch((e) => addChat("system", "发送失败：" + e.message));
-}
-
-async function stopAnswerAndRecognize() {
-  const btn = $("btn-record");
-  btn.classList.remove("recording");
-  btn.disabled = true;
-  btn.textContent = "识别中…";
-  try {
-    const blob = await voice.stopAnswer();
-    const text = await voice.recognize(blob);
-    if (text) {
-      $("answer-input").value = text;
-      $("answer-input").focus(); // 识别结果可修正后发送，错字不直接进记录
-    } else {
-      addChat("system", "没听清，请重说或改用打字");
-    }
-  } catch (e) {
-    addChat("system", "语音识别失败：" + e.message);
-  } finally {
-    btn.disabled = false;
-    btn.textContent = "🎤 开始作答";
-  }
-}
-
-async function toggleRecording() {
-  const btn = $("btn-record");
-  if (!voice) return;
-  if (btn.classList.contains("recording")) {
-    await stopAnswerAndRecognize(); // 手动结束（VAD 开启时同样走这条路）
-    return;
-  }
-  btn.classList.add("recording");
-  btn.textContent = "⏹ 结束作答";
-  const autoStop = $("cfg-autostop").checked;
-  if (autoStop) {
-    voice.onSpeak = () => { btn.textContent = "⏹ 结束作答（正在听…）"; };
-    voice.onSilence = (quietMs, limitMs) => {
-      const left = Math.ceil((limitMs - quietMs) / 1000);
-      btn.textContent = `⏹ 停顿中…${left}s 后自动结束，继续说即取消`;
-    };
-  }
-  await voice.startAnswer(autoStop ? {
-    autoStopMs: 5000,
-    onAutoStop: () => { if (btn.classList.contains("recording")) stopAnswerAndRecognize(); },
-  } : {});
 }
 
 async function endInterview() {
@@ -453,7 +436,6 @@ document.querySelectorAll("nav button[data-view]").forEach((b) => {
 $("btn-start").onclick = startInterview;
 $("btn-send").onclick = sendAnswer;
 $("btn-end").onclick = endInterview;
-$("btn-record").onclick = toggleRecording;
 $("btn-bg-upload").onclick = uploadBackground;
 $("answer-input").addEventListener("keydown", (ev) => {
   if (ev.key === "Enter" && !ev.shiftKey) { ev.preventDefault(); sendAnswer(); }

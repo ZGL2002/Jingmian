@@ -25,11 +25,7 @@
       <div class="style-pick"><span>面试官风格：</span><div id="cfg-styles"></div></div>
       <label class="voice-toggle">
         <input type="checkbox" id="cfg-voice">
-        语音模式（麦克风作答、面试官语音播报、开启摄像头画面）
-      </label>
-      <label class="voice-toggle">
-        <input type="checkbox" id="cfg-autostop" checked>
-        自动结束作答（检测到停顿约 5 秒自动结束录音；关闭则需手动点击结束）
+        语音模式（实时语音对话：边说边识别、面试官语音播报、可随时插话打断、开启摄像头画面）
       </label>
       <label>简历文本<textarea id="cfg-resume" placeholder="粘贴简历，或使用下方文件上传"></textarea></label>
       <label>上传简历文件<input type="file" id="cfg-resume-file" accept=".txt,.md,.pdf"></label>
@@ -50,9 +46,10 @@
       <div id="chat"></div>
     </div>
     <div id="thinking" class="thinking hidden">面试官思考中…</div>
+    <div id="voice-status" class="voice-status hidden"></div>
+    <div id="live-caption" class="live-caption hidden"></div>
     <div class="answer-row">
-      <button id="btn-record" class="hidden" disabled>🎤 开始作答</button>
-      <textarea id="answer-input" placeholder="输入回答，Enter 发送，Shift+Enter 换行" disabled></textarea>
+      <textarea id="answer-input" placeholder="输入回答，Enter 发送，Shift+Enter 换行（语音模式下也可打字）" disabled></textarea>
       <button id="btn-send" disabled>发送</button>
       <button id="btn-end" disabled>结束面试</button>
     </div>
