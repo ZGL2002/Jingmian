@@ -32,6 +32,7 @@ def load_config(env_path: str | None = None) -> dict:
         "web_token": os.environ.get("INTERVIEW_WEB_TOKEN", ""),
         "session_idle_timeout": int(os.environ.get("INTERVIEW_SESSION_IDLE_TIMEOUT", "1800")),
         "dashscope_api_key": os.environ.get("DASHSCOPE_API_KEY", ""),
+        "asr_model": os.environ.get("INTERVIEW_ASR_MODEL", "paraformer-realtime-v2"),
         "tts_model": os.environ.get("INTERVIEW_TTS_MODEL", "cosyvoice-v2"),
         "tts_voice": os.environ.get("INTERVIEW_TTS_VOICE", ""),
         # INTERVIEW_TTS_VOICE_<STYLE>（如 _SERIOUS）按风格覆盖；全局键 INTERVIEW_TTS_VOICE

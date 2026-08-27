@@ -67,6 +67,10 @@ python -m interview_agent.web
 **账号音色受限时**：默认四风格各用一个音色（cosyvoice-v2）；若你的百炼账号/模型只有单一音色，
 配置 `INTERVIEW_TTS_VOICE=可用音色` 即可让四风格共用，风格差异仍由背景、人设、语速保留；
 也可用 `INTERVIEW_TTS_MODEL` 更换 TTS 模型、`INTERVIEW_TTS_VOICE_<风格>` 按风格指定。
+**换 TTS 模型必须同时换音色**（音色不跨模型兼容）：cosyvoice 系列用 longshu_v2 等；
+qwen-audio-3.0-tts-flash/plus 用其自身音色表（如 longanfengyue、longanlingxin、longanlufeng）。
+ASR 识别模型可用 `INTERVIEW_ASR_MODEL` 更换（默认 paraformer-realtime-v2，
+可选 fun-asr-realtime、qwen-audio-3.0-asr-flash-streaming 等）。
 
 未配置 DashScope key 时语音功能自动禁用，文本面试不受影响。建议佩戴耳机，
 否则回放中面试官声音会因麦克风拾到扬声器而有轻微重叠。

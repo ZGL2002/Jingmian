@@ -18,16 +18,23 @@ class AudioError(Exception):
 class DashScopeEngine:
     """dashscope SDK 薄封装，方便测试注入 fake 模块。"""
 
-    def __init__(self, api_key: str, tts_model: str = "cosyvoice-v2"):
+    def __init__(self, api_key: str, tts_model: str = "cosyvoice-v2",
+                 asr_model: str = "paraformer-realtime-v2"):
         import dashscope
         dashscope.api_key = api_key
         self.tts_model = tts_model
+        self.asr_model = asr_model
 
     def transcribe_file(self, path: Path, fmt: str = "wav") -> str:
         from dashscope.audio.asr import Recognition
+        # Fun-ASR 系列的 language_hints 仅支持 1 个语种，qwen/paraformer 支持多个
+        if self.asr_model.startswith("fun-asr"):
+            hints = ["zh"]
+        else:
+            hints = ["zh", "en"]
         rec = Recognition(
-            model="paraformer-realtime-v2", format=fmt,
-            sample_rate=16000, language_hints=["zh", "en"],
+            model=self.asr_model, format=fmt,
+            sample_rate=16000, language_hints=hints,
         )
         result = rec.call(str(path))
         if result.status_code != HTTPStatus.OK:
@@ -56,8 +63,9 @@ class AudioService:
         self.available = True
 
     @classmethod
-    def from_config(cls, api_key: str, tts_model: str = "cosyvoice-v2") -> "AudioService | None":
-        return cls(DashScopeEngine(api_key, tts_model=tts_model)) if api_key else None
+    def from_config(cls, api_key: str, tts_model: str = "cosyvoice-v2",
+                    asr_model: str = "paraformer-realtime-v2") -> "AudioService | None":
+        return cls(DashScopeEngine(api_key, tts_model=tts_model, asr_model=asr_model)) if api_key else None
 
     def transcribe(self, audio_bytes: bytes, fmt: str = "wav") -> str:
         if fmt not in ASR_FORMATS:

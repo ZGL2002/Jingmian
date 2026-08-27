@@ -55,6 +55,21 @@ def test_engine_transcribe_joins_sentences(tmp_path, monkeypatch):
     assert engine.transcribe_file(p, "wav") == "你好，面试官。"
     assert FakeRecognition.last_kwargs["model"] == "paraformer-realtime-v2"
     assert FakeRecognition.last_kwargs["format"] == "wav"
+    assert FakeRecognition.last_kwargs["language_hints"] == ["zh", "en"]
+
+
+def test_engine_asr_model_configurable(tmp_path, monkeypatch):
+    install_fake_dashscope(monkeypatch)
+    p = tmp_path / "a.wav"
+    p.write_bytes(b"RIFF")
+    # qwen 系列：多语种 hint
+    DashScopeEngine("sk-test", asr_model="qwen-audio-3.0-asr-flash-streaming").transcribe_file(p)
+    assert FakeRecognition.last_kwargs["model"] == "qwen-audio-3.0-asr-flash-streaming"
+    assert FakeRecognition.last_kwargs["language_hints"] == ["zh", "en"]
+    # fun-asr 系列：仅支持 1 个语种
+    DashScopeEngine("sk-test", asr_model="fun-asr-realtime").transcribe_file(p)
+    assert FakeRecognition.last_kwargs["model"] == "fun-asr-realtime"
+    assert FakeRecognition.last_kwargs["language_hints"] == ["zh"]
 
 
 def test_engine_synthesize(tmp_path, monkeypatch):
@@ -106,3 +121,13 @@ def test_load_config_tts_keys(tmp_path, monkeypatch):
     assert cfg["tts_model"] == "cosyvoice-v1"
     assert cfg["tts_voice"] == "single-voice"
     assert cfg["tts_voice_by_style"] == {"serious": "serious-voice"}
+
+
+def test_load_config_asr_model(tmp_path, monkeypatch):
+    from interview_agent.config import load_config
+    env = tmp_path / ".env"
+    env.write_text("", encoding="utf-8")
+    monkeypatch.delenv("INTERVIEW_ASR_MODEL", raising=False)
+    assert load_config(str(env))["asr_model"] == "paraformer-realtime-v2"
+    monkeypatch.setenv("INTERVIEW_ASR_MODEL", "qwen-audio-3.0-asr-flash-streaming")
+    assert load_config(str(env))["asr_model"] == "qwen-audio-3.0-asr-flash-streaming"
