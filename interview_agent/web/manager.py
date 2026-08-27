@@ -5,6 +5,7 @@ import time
 from pathlib import Path
 from ..agent import ToolAgent
 from ..models import SessionConfig
+from ..persona import get_style
 from ..resume import parse_resume
 from ..security import PathPolicy
 from ..session import InterviewSession
@@ -29,7 +30,7 @@ class SessionManager:
 
     def start_session(self, user_id: str, *, company: str = "", position: str = "",
                       resume_text: str | None = None, jd_text: str = "",
-                      experiences=None) -> str:
+                      experiences=None, style: str = "serious") -> str:
         if self.llm is None:
             raise RuntimeError("LLM 未初始化")
         resume = parse_resume(resume_text) if resume_text else None
@@ -43,6 +44,7 @@ class SessionManager:
             position=position,
             jd_text=jd_text,
             experience_refs=list(experiences or []),
+            style=get_style(style).key,
         )
         session = InterviewSession(cfg, resume)
         session.start()

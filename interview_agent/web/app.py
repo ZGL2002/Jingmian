@@ -12,6 +12,7 @@ from ..library import (
     new_experience_id, save_experience, list_experiences, delete_experience,
 )
 from ..models import ExperienceEntry
+from ..persona import list_styles
 from ..resume import extract_text
 from ..security import check_owner
 from ..storage import list_sessions, read_jsonl, timestamp
@@ -67,12 +68,17 @@ def create_app(config: dict, llm=None) -> FastAPI:
         resp.delete_cookie(AUTH_COOKIE)
         return resp
 
+    @app.get("/api/styles")
+    def styles():
+        return [{"key": s.key, "label": s.label} for s in list_styles()]
+
     @app.post("/api/session/start")
     async def start_session(
         company: str = Form(""),
         position: str = Form(""),
         jd_text: str = Form(""),
         resume_text: str = Form(""),
+        style: str = Form("serious"),
         experience_ids: list[str] = Form([]),
         resume: UploadFile | None = File(None),
     ):
@@ -101,6 +107,7 @@ def create_app(config: dict, llm=None) -> FastAPI:
             resume_text=resume_text or None,
             jd_text=jd_text,
             experiences=experiences,
+            style=style,
         )
         return {"session_id": sid}
 
