@@ -1,10 +1,14 @@
-"""FastAPI 应用：路由、口令、SSE、历史、报告、面经库。"""
+"""FastAPI 应用：路由、口令、SSE、历史、报告、面经库、语音。"""
 from __future__ import annotations
 import asyncio
+import base64
+import json
+import queue as _queue
 import re
+import threading
 import uuid
 from pathlib import Path
-from fastapi import FastAPI, Form, HTTPException, Request, Response, UploadFile, File
+from fastapi import FastAPI, Form, HTTPException, Request, Response, UploadFile, File, WebSocket
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 import markdown
@@ -20,6 +24,7 @@ from .audio import ASR_FORMATS, AudioError
 from .auth import TokenAuthMiddleware, AUTH_COOKIE, token_matches
 from .events import sse_format, sse_stream_async
 from .manager import SessionManager
+from .voice_stream import run_voice_websocket
 
 WEB_USER_ID = "local"
 SID_PATTERN = re.compile(r"[\w\-]+")
@@ -306,5 +311,23 @@ def create_app(config: dict, llm=None, audio=None) -> FastAPI:
         for p in sorted(_bg_dir().glob(f"{style}.*")):
             return FileResponse(p)
         raise HTTPException(404, "未设置自定义背景")
+
+    @app.websocket("/api/ws/voice/{session_id}")
+    async def voice_ws(websocket: WebSocket, session_id: str):
+        # TokenAuthMiddleware（BaseHTTPMiddleware）不拦 websocket，这里手工鉴权
+        cookie = websocket.cookies.get(AUTH_COOKIE, "")
+        if not token or not token_matches(cookie, token):
+            await websocket.close(code=4401)
+            return
+        if not SID_PATTERN.fullmatch(session_id or ""):
+            await websocket.close(code=4404)
+            return
+        if manager.get_task(WEB_USER_ID, session_id) is None:
+            await websocket.close(code=4404)
+            return
+        if audio is None:
+            await websocket.close(code=4403)
+            return
+        await run_voice_websocket(websocket, audio)
 
     return app
