@@ -114,6 +114,48 @@ def create_app(config: dict, llm=None, audio=None) -> FastAPI:
             raise HTTPException(502, str(e))
         return Response(content=mp3, media_type="audio/mpeg")
 
+    @app.post("/api/tts/stream")
+    def tts_stream(payload: dict):
+        """流式合成：SSE 逐块下发 base64 PCM（22.05k 单声道 16bit），结束标志 [DONE]。"""
+        if audio is None:
+            raise HTTPException(404, "语音功能未启用（未配置 DASHSCOPE_API_KEY）")
+        text = str(payload.get("text", "")).strip()
+        if not text or len(text) > 500:
+            raise HTTPException(400, "文本为空或超过 500 字")
+        style = get_style(str(payload.get("style", "")))
+        voice = resolve_voice(
+            style.key,
+            config.get("tts_voice", ""),
+            config.get("tts_voice_by_style") or None,
+        )
+        q: _queue.Queue = _queue.Queue()
+
+        def on_chunk(chunk: bytes) -> None:
+            q.put(chunk)
+
+        def run() -> None:
+            try:
+                audio.engine.synthesize_stream(text, voice, style.tts_speed, on_chunk)
+            except Exception as e:  # noqa: BLE001 - 流内报错事件
+                q.put({"type": "error", "message": f"语音合成失败：{e}"})
+            finally:
+                q.put(None)
+
+        threading.Thread(target=run, daemon=True).start()
+
+        def gen():
+            while True:
+                item = q.get()
+                if item is None:
+                    break
+                if isinstance(item, dict):
+                    yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
+                    break
+                yield "data: " + base64.b64encode(item).decode() + "\n\n"
+            yield "data: [DONE]\n\n"
+
+        return StreamingResponse(gen(), media_type="text/event-stream")
+
     @app.post("/api/session/start")
     async def start_session(
         company: str = Form(""),
