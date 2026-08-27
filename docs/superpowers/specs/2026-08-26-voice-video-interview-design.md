@@ -17,7 +17,7 @@
 
 | 决策点 | 选择 |
 |---|---|
-| ASR/TTS 供应商 | 阿里云百炼 DashScope（Paraformer 录音文件识别 + CosyVoice 合成），与现有 DashScope LLM provider 共用 `DASHSCOPE_API_KEY` |
+| ASR/TTS 供应商 | 阿里云百炼 DashScope（Paraformer `paraformer-realtime-v2` 本地文件同步识别 + CosyVoice 合成），与现有 DashScope LLM provider 共用 `DASHSCOPE_API_KEY`。注：录音文件转写接口要求公网 URL，不适用本地部署，故用 Recognition 本地文件调用 |
 | 背景素材 | 内置 CSS 动画主题为默认 + 支持按风格上传自定义 GIF/视频覆盖 |
 | 摄像头 | 仅实时预览，不录制 |
 | 风格作用 | 同时影响：动态背景、注入系统提示词的面试官人设、TTS 音色/语速（音色可用环境变量收敛为单一，见"音色与 TTS 模型可配置"） |
@@ -43,7 +43,9 @@ SSE delta ── 句末切分 ── /api/tts ── AudioContext 同时→扬�
 
 ## 模块设计
 
-### 1. `interview_agent/web/persona.py` — 风格系统
+### 1. `interview_agent/persona.py` — 风格系统
+
+（实现时从 `web/persona.py` 移到顶层：`session.py` 属 core 层需要引用，避免 core→web 反向依赖）
 
 ```python
 @dataclass(frozen=True)
@@ -75,7 +77,7 @@ def list_styles() -> list[PersonaStyle]
 ```python
 class AudioService:
     def __init__(self, api_key: str, client=None)   # client 可注入 fake 供测试
-    def transcribe(self, audio_bytes: bytes, fmt: str) -> str   # Paraformer 录音文件识别
+    def transcribe(self, audio_bytes: bytes, fmt: str) -> str   # Paraformer 本地文件识别（Recognition.call）
     def synthesize(self, text: str, voice: str, speed: float) -> bytes  # CosyVoice 合成 mp3
 ```
 
@@ -155,7 +157,7 @@ interviews/<user_id>/backgrounds/
 - 不戴耳机时麦克风会拾到扬声器的 TTS，回放中面试官声音有轻微重叠感（电子直混 + 环境拾音双路径）；本地单人练习可接受。
 - VAD 静音检测在极嘈杂环境可能不触发自动结束（阈值自适应缓解，仍可手动点停）；思考停顿超过 5 秒会被误判为说完（倒计时提示 + 文字回填可改可重录，代价低）。
 - MediaRecorder 5 秒切片仅缓存在内存，浏览器崩溃则丢失整场录音（页面正常关闭/刷新不触发；`beforeunload` 尽力上传已缓存的 Blob——实现为尽力而为，不承诺成功）。
-- ASR 为录音文件识别（非实时流），每段回答有约 1-2 秒识别延迟，对面试问答节奏可接受。
+- ASR 为录音后一次性识别（非实时流），每段回答有约 1-2 秒识别延迟，对面试问答节奏可接受。
 
 ## 测试
 
