@@ -14,20 +14,57 @@ textarea { min-height: 60px; resize: vertical; }
 .exp-option { display: inline-block; margin-right: 12px; }
 .hidden { display: none !important; }
 .error { color: #d33; font-size: 13px; }
-#chat { background: #fff; border: 1px solid #e0e0e0; border-radius: 8px; min-height: 320px; max-height: 56vh; overflow-y: auto; padding: 16px; margin-bottom: 12px; }
-.msg { margin: 8px 0; padding: 10px 12px; border-radius: 8px; white-space: pre-wrap; }
-.msg.interviewer { background: #eef3ee; }
-.msg.candidate { background: #e8edf5; margin-left: 40px; }
-.msg.system { background: #f7f3e8; font-size: 13px; }
+
+/* 风格选择与语音开关 */
+.style-pick { margin: 10px 0; font-size: 14px; }
+#cfg-styles { display: inline-flex; gap: 6px; flex-wrap: wrap; margin-left: 4px; }
+#cfg-styles label { display: inline-flex; align-items: center; gap: 4px; margin: 0; padding: 4px 12px; border: 1px solid #ccc; border-radius: 999px; cursor: pointer; background: #fff; }
+#cfg-styles label:has(input:checked) { border-color: #2563eb; background: #e8eefc; color: #1c3aa9; font-weight: 600; }
+.voice-toggle { display: flex; align-items: center; gap: 8px; }
+.voice-toggle input { width: auto; }
+.bg-upload { margin: 8px 0; font-size: 13px; color: #666; }
+.bg-upload input { display: inline-block; width: auto; }
+.bg-upload button { padding: 4px 10px; border: 1px solid #ccc; background: #fff; border-radius: 6px; cursor: pointer; }
+#bg-upload-msg { margin-left: 6px; color: #16a34a; }
+
+/* 舞台：聊天区 + 动态主题背景 + 摄像头小窗 */
+#stage { position: relative; border-radius: 10px; min-height: 320px; max-height: 56vh; overflow-y: auto; padding: 16px; margin-bottom: 12px; border: 1px solid #e0e0e0; transition: background 0.6s ease; }
+#chat { position: relative; z-index: 1; display: flex; flex-direction: column; gap: 10px; }
+.msg { max-width: 82%; padding: 10px 12px; border-radius: 10px; white-space: pre-wrap; word-break: break-word; line-height: 1.55; }
+.msg.interviewer { background: rgba(255,255,255,.93); border: 1px solid rgba(0,0,0,.08); align-self: flex-start; }
+.msg.candidate { background: rgba(37,99,235,.16); align-self: flex-end; }
+.msg.system { background: rgba(247,243,232,.9); font-size: 13px; align-self: center; }
+.msg .replay-btn { display: block; margin-top: 6px; font-size: 12px; color: #2563eb; background: none; border: none; cursor: pointer; padding: 0; }
+#bg-layer { position: absolute; inset: 0; z-index: 0; overflow: hidden; border-radius: 10px; }
+#bg-layer img, #bg-layer video { width: 100%; height: 100%; object-fit: cover; opacity: .45; pointer-events: none; }
+#cam-preview { position: sticky; top: 0; float: right; width: 180px; height: auto; margin-left: 10px; border-radius: 8px; border: 1px solid rgba(255,255,255,.6); background: #000; z-index: 2; }
+
+/* 四套内置动态主题：stage[data-theme] 驱动 */
+#stage[data-theme="serious"] { background: linear-gradient(160deg, #0b1f3a 0%, #14356b 50%, #0b1f3a 100%); background-size: 200% 200%; animation: theme-serious 14s ease-in-out infinite; }
+@keyframes theme-serious { 0%,100% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } }
+#stage[data-theme="cold"] { background: repeating-linear-gradient(115deg, #d9dde3 0 26px, #c8cdd6 26px 52px); animation: theme-cold 6s linear infinite; }
+@keyframes theme-cold { to { background-position: 104px 0; } }
+#stage[data-theme="gentle"] { background: radial-gradient(circle at 30% 30%, rgba(255,187,130,.55), transparent 60%), radial-gradient(circle at 75% 70%, rgba(255,143,150,.4), transparent 55%), #fff6ec; animation: theme-gentle 7s ease-in-out infinite alternate; }
+@keyframes theme-gentle { from { filter: saturate(.85) brightness(1); } to { filter: saturate(1.15) brightness(1.06); } }
+#stage[data-theme="guide"] { background: linear-gradient(120deg, #4f46e5, #0ea5e9, #10b981, #4f46e5); background-size: 300% 300%; animation: theme-guide 10s ease infinite; }
+@keyframes theme-guide { 0%,100% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } }
+#stage[data-theme="serious"] .msg.system, #stage[data-theme="guide"] .msg.system { background: rgba(255,255,255,.85); }
+
 .thinking { color: #999; padding: 4px 8px; }
 .answer-row { display: flex; gap: 8px; align-items: flex-start; }
 .answer-row textarea { flex: 1; }
 .answer-row button { padding: 10px 14px; border: 1px solid #ccc; background: #fff; border-radius: 6px; cursor: pointer; }
+#btn-send { border-color: #16a34a; color: #16a34a; font-weight: 600; }
+#btn-record { border-color: #7c3aed; background: #7c3aed; color: #fff; font-weight: 600; }
+#btn-record.recording { background: #d0342c; border-color: #d0342c; animation: pulse 1s infinite; }
+@keyframes pulse { 50% { opacity: .55; } }
+
 .history-row { background: #fff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 10px 12px; margin-bottom: 8px; display: flex; gap: 10px; align-items: center; }
 .history-row b { flex: 1; }
 .report { background: #fff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 16px; margin-top: 8px; }
 .transcript { white-space: pre-wrap; background: #fff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 12px; }
 .exp-form { background: #fff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 12px; margin-bottom: 12px; }
+audio { width: 100%; margin: 10px 0; }
 .login-box { max-width: 360px; margin: 12vh auto; background: #fff; border: 1px solid #e0e0e0; border-radius: 10px; padding: 28px; text-align: center; }
 .login-box input { margin-bottom: 12px; }
 .subtitle { color: #777; }

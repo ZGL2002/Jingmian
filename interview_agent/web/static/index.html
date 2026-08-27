@@ -22,16 +22,36 @@
         <label>目标公司<input id="cfg-company" placeholder="如：字节跳动"></label>
         <label>岗位名称<input id="cfg-position" placeholder="如：后端开发"></label>
       </div>
+      <div class="style-pick"><span>面试官风格：</span><div id="cfg-styles"></div></div>
+      <label class="voice-toggle">
+        <input type="checkbox" id="cfg-voice">
+        语音模式（麦克风作答、面试官语音播报、开启摄像头画面）
+      </label>
+      <label class="voice-toggle">
+        <input type="checkbox" id="cfg-autostop" checked>
+        自动结束作答（检测到停顿约 5 秒自动结束录音；关闭则需手动点击结束）
+      </label>
       <label>简历文本<textarea id="cfg-resume" placeholder="粘贴简历，或使用下方文件上传"></textarea></label>
       <label>上传简历文件<input type="file" id="cfg-resume-file" accept=".txt,.md,.pdf"></label>
       <label>岗位描述 JD<textarea id="cfg-jd" placeholder="粘贴岗位描述（可选）"></textarea></label>
       <div class="exp-pick"><span>面经参考：</span><div id="cfg-experiences"></div></div>
+      <div class="bg-upload">
+        为当前所选风格上传自定义动态背景（可选，gif/mp4/webm/png，不传则用内置动画）：
+        <input type="file" id="cfg-bg-file" accept=".gif,.mp4,.webm,.png">
+        <button id="btn-bg-upload" type="button">上传背景</button>
+        <span id="bg-upload-msg"></span>
+      </div>
       <button id="btn-start">开始面试</button>
       <span id="start-error" class="error"></span>
     </details>
-    <div id="chat"></div>
+    <div id="stage" data-theme="serious">
+      <div id="bg-layer" class="hidden"></div>
+      <video id="cam-preview" class="hidden" muted autoplay playsinline></video>
+      <div id="chat"></div>
+    </div>
     <div id="thinking" class="thinking hidden">面试官思考中…</div>
     <div class="answer-row">
+      <button id="btn-record" class="hidden" disabled>🎤 开始作答</button>
       <textarea id="answer-input" placeholder="输入回答，Enter 发送，Shift+Enter 换行" disabled></textarea>
       <button id="btn-send" disabled>发送</button>
       <button id="btn-end" disabled>结束面试</button>
@@ -40,6 +60,7 @@
   <section id="view-history" class="hidden"></section>
   <section id="view-experiences" class="hidden"></section>
 </main>
+<script src="/static/voice.js"></script>
 <script src="/static/app.js"></script>
 </body>
 </html>
