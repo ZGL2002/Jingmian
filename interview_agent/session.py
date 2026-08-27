@@ -1,6 +1,7 @@
 """面试会话状态机与对话记录。"""
 from __future__ import annotations
 from .models import SessionConfig, SessionState, ResumeDocument
+from .persona import get_style
 from .prompts import build_system_prompt
 from .library import save_experience_ref
 from .storage import (
@@ -32,6 +33,7 @@ class InterviewSession:
             self.session_id,
             company=self.config.company,
             position=self.config.position,
+            style=self.config.style,
         )
         prompt = build_system_prompt(
             self.resume,
@@ -41,6 +43,7 @@ class InterviewSession:
             position=self.config.position,
             jd_text=self.config.jd_text or None,
             experience_refs=self.config.experience_refs,
+            persona=get_style(self.config.style).prompt_fragment,
         )
         write_owned(self.session_dir / "prompt.md", self.config.user_id, prompt)
         if self.resume is not None:

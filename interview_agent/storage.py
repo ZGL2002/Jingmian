@@ -43,12 +43,15 @@ def read_jsonl(path: Path) -> list[dict]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
 
 
-def init_transcript(path: Path, user_id: str, session_id: str, company: str = "", position: str = "") -> None:
+def init_transcript(path: Path, user_id: str, session_id: str, company: str = "", position: str = "",
+                    style: str = "") -> None:
     entry = {"role": "meta", "user_id": user_id, "session_id": session_id}
     if company:
         entry["company"] = company
     if position:
         entry["position"] = position
+    if style:
+        entry["style"] = style
     append_jsonl(path, entry)
 
 

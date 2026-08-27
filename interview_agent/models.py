@@ -45,6 +45,7 @@ class SessionConfig:
     position: str = ""
     jd_text: str = ""
     experience_refs: list[ExperienceEntry] = field(default_factory=list)
+    style: str = "serious"
 
 
 @dataclass

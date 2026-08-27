@@ -12,7 +12,7 @@ def test_start_creates_files(tmp_path):
     assert s.state == SessionState.OPENING
     assert (s.session_dir / "prompt.md").exists()
     meta = read_jsonl(s.transcript_path)[0]
-    assert meta == {"role": "meta", "user_id": "alice", "session_id": s.session_id}
+    assert meta == {"role": "meta", "user_id": "alice", "session_id": s.session_id, "style": "serious"}
 
 def test_start_writes_resume_copy(tmp_path):
     s = make_session(tmp_path, ResumeDocument(raw_text="简历"))

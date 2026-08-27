@@ -26,6 +26,7 @@ def build_system_prompt(
     position: str = "",
     jd_text: str | None = None,
     experience_refs: list | None = None,
+    persona: str = "",
 ) -> str:
     resume_block = render_resume_section(resume) if resume else "（无简历模式：只考通用后端与 AI 应用开发基础）"
     extras: list[str] = []
@@ -43,9 +44,10 @@ def build_system_prompt(
             blocks.append(f"[{i}] {label}\n{ref.content[:2000]}")
         extras.append("## 参考面经（可据此出高频题，但不要复述具体候选人对话）\n" + "\n\n".join(blocks))
     extra_block = ("\n\n" + "\n\n".join(extras)) if extras else ""
+    persona_block = f"当前面试官风格人设（语气与追问方式必须贯彻）：{persona}\n\n" if persona else ""
     return f"""你是一位资深后端技术面试官，正在进行一场真实感的一对一技术面试。
 
-面试规则：
+{persona_block}面试规则：
 1. 自由对话式提问：先概览再深入，循序渐进；根据候选人回答决定是否追问，追问要有深度。
 2. 简历深挖优先：优先围绕候选人简历中的项目和技术栈提问；至少包含一道场景题；约 30% 的题目考察通用后端与 AI 应用开发基础。
 3. 至少完成 {min_questions} 题（含追问）后，才可以调用 request_wrap 工具请求收尾；收尾必须自然连贯，禁止草率结束。
