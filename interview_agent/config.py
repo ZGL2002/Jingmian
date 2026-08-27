@@ -31,6 +31,16 @@ def load_config(env_path: str | None = None) -> dict:
         "web_port": int(os.environ.get("INTERVIEW_WEB_PORT", "8765")),
         "web_token": os.environ.get("INTERVIEW_WEB_TOKEN", ""),
         "session_idle_timeout": int(os.environ.get("INTERVIEW_SESSION_IDLE_TIMEOUT", "1800")),
+        "dashscope_api_key": os.environ.get("DASHSCOPE_API_KEY", ""),
+        "tts_model": os.environ.get("INTERVIEW_TTS_MODEL", "cosyvoice-v2"),
+        "tts_voice": os.environ.get("INTERVIEW_TTS_VOICE", ""),
+        # INTERVIEW_TTS_VOICE_<STYLE>（如 _SERIOUS）按风格覆盖；全局键 INTERVIEW_TTS_VOICE
+        # 本身（无后缀）不匹配 startswith 后的下划线要求，不会进入此 dict
+        "tts_voice_by_style": {
+            k[len("INTERVIEW_TTS_VOICE_"):].lower(): v
+            for k, v in os.environ.items()
+            if k.startswith("INTERVIEW_TTS_VOICE_") and v
+        },
     }
 
 
