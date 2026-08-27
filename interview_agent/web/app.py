@@ -12,7 +12,7 @@ from ..library import (
     new_experience_id, save_experience, list_experiences, delete_experience,
 )
 from ..models import ExperienceEntry
-from ..persona import get_style, list_styles, resolve_voice
+from ..persona import get_style, list_styles, resolve_voice, style_keys
 from ..resume import extract_text
 from ..security import check_owner
 from ..storage import list_sessions, read_jsonl, save_session_audio, timestamp
@@ -275,5 +275,36 @@ def create_app(config: dict, llm=None, audio=None) -> FastAPI:
         if not delete_experience(Path(config["session_root"]), WEB_USER_ID, exp_id):
             raise HTTPException(404, "面经不存在")
         return {"ok": True}
+
+    BG_EXTS = {".gif", ".mp4", ".webm", ".png"}
+
+    def _bg_dir() -> Path:
+        d = (Path(config["session_root"]) / WEB_USER_ID / "backgrounds").resolve()
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    @app.post("/api/backgrounds/{style}")
+    async def upload_background(style: str, file: UploadFile = File(...)):
+        if style not in style_keys():
+            raise HTTPException(400, "未知的面试官风格")
+        suffix = Path(file.filename or "").suffix.lower()
+        if suffix not in BG_EXTS:
+            raise HTTPException(400, "仅支持 gif/mp4/webm/png")
+        data = await file.read()
+        if not data or len(data) > 50 * 1024 * 1024:
+            raise HTTPException(400, "文件为空或超过 50MB")
+        d = _bg_dir()
+        for old in d.glob(f"{style}.*"):
+            old.unlink(missing_ok=True)
+        (d / f"{style}{suffix}").write_bytes(data)
+        return {"ok": True, "url": f"/api/backgrounds/{style}"}
+
+    @app.get("/api/backgrounds/{style}")
+    def get_background(style: str):
+        if style not in style_keys():
+            raise HTTPException(400, "未知的面试官风格")
+        for p in sorted(_bg_dir().glob(f"{style}.*")):
+            return FileResponse(p)
+        raise HTTPException(404, "未设置自定义背景")
 
     return app
