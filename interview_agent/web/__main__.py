@@ -4,6 +4,7 @@ import uvicorn
 from ..config import load_config, require_api_key, require_web_token
 from ..llm import create_llm
 from .app import create_app
+from .audio import AudioService
 
 
 def main() -> None:
@@ -13,7 +14,12 @@ def main() -> None:
     llm = create_llm(
         api_key=api_key, model=cfg["model"], provider=cfg.get("provider", "deepseek")
     )
-    app = create_app(cfg, llm=llm)
+    app = create_app(
+        cfg, llm=llm,
+        audio=AudioService.from_config(
+            cfg.get("dashscope_api_key", ""), tts_model=cfg.get("tts_model", "cosyvoice-v2")
+        ),
+    )
     uvicorn.run(
         app,
         host=cfg["web_host"],

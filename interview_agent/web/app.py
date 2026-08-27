@@ -4,7 +4,7 @@ import asyncio
 import re
 import uuid
 from pathlib import Path
-from fastapi import FastAPI, Form, HTTPException, Request, UploadFile, File
+from fastapi import FastAPI, Form, HTTPException, Request, Response, UploadFile, File
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 import markdown
@@ -12,10 +12,11 @@ from ..library import (
     new_experience_id, save_experience, list_experiences, delete_experience,
 )
 from ..models import ExperienceEntry
-from ..persona import list_styles
+from ..persona import get_style, list_styles, resolve_voice
 from ..resume import extract_text
 from ..security import check_owner
 from ..storage import list_sessions, read_jsonl, timestamp
+from .audio import ASR_FORMATS, AudioError
 from .auth import TokenAuthMiddleware, AUTH_COOKIE, token_matches
 from .events import sse_format, sse_stream_async
 from .manager import SessionManager
@@ -25,7 +26,7 @@ SID_PATTERN = re.compile(r"[\w\-]+")
 STATIC_DIR = Path(__file__).parent / "static"
 
 
-def create_app(config: dict, llm=None) -> FastAPI:
+def create_app(config: dict, llm=None, audio=None) -> FastAPI:
     if llm is None:
         raise ValueError("create_app 需要 llm 实例")
     app = FastAPI(title="面试 Agent")
@@ -71,6 +72,42 @@ def create_app(config: dict, llm=None) -> FastAPI:
     @app.get("/api/styles")
     def styles():
         return [{"key": s.key, "label": s.label} for s in list_styles()]
+
+    @app.post("/api/asr")
+    async def asr(file: UploadFile = File(...), fmt: str = Form("wav")):
+        if audio is None:
+            raise HTTPException(404, "语音功能未启用（未配置 DASHSCOPE_API_KEY）")
+        if fmt not in ASR_FORMATS:
+            raise HTTPException(400, "不支持的音频格式")
+        data = await file.read()
+        if not data:
+            raise HTTPException(400, "音频为空")
+        if len(data) > 20 * 1024 * 1024:
+            raise HTTPException(400, "音频过大（限 20MB）")
+        try:
+            text = audio.transcribe(data, fmt)
+        except AudioError as e:
+            raise HTTPException(502, str(e))
+        return {"text": text}
+
+    @app.post("/api/tts")
+    def tts(payload: dict):
+        if audio is None:
+            raise HTTPException(404, "语音功能未启用（未配置 DASHSCOPE_API_KEY）")
+        text = str(payload.get("text", "")).strip()
+        if not text or len(text) > 500:
+            raise HTTPException(400, "文本为空或超过 500 字")
+        style = get_style(str(payload.get("style", "")))
+        voice = resolve_voice(
+            style.key,
+            config.get("tts_voice", ""),
+            config.get("tts_voice_by_style") or None,
+        )
+        try:
+            mp3 = audio.synthesize(text, voice, style.tts_speed)
+        except AudioError as e:
+            raise HTTPException(502, str(e))
+        return Response(content=mp3, media_type="audio/mpeg")
 
     @app.post("/api/session/start")
     async def start_session(
