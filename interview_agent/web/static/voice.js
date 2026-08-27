@@ -178,7 +178,10 @@ class VoiceEngine {
     fd.append("file", new Blob([wav], { type: "audio/wav" }));
     fd.append("fmt", "wav");
     const r = await fetch("/api/asr", { method: "POST", body: fd });
-    if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "识别失败");
+    if (!r.ok) {
+      const d = await r.json().catch(() => ({}));
+      throw new Error(d.error || d.detail || "识别失败");
+    }
     return (await r.json()).text;
   }
 

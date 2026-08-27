@@ -56,6 +56,7 @@ def test_engine_transcribe_joins_sentences(tmp_path, monkeypatch):
     assert FakeRecognition.last_kwargs["model"] == "paraformer-realtime-v2"
     assert FakeRecognition.last_kwargs["format"] == "wav"
     assert FakeRecognition.last_kwargs["language_hints"] == ["zh", "en"]
+    assert FakeRecognition.last_kwargs["callback"] is None  # SDK 要求必填
 
 
 def test_engine_asr_model_configurable(tmp_path, monkeypatch):

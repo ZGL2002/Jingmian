@@ -33,7 +33,7 @@ class DashScopeEngine:
         else:
             hints = ["zh", "en"]
         rec = Recognition(
-            model=self.asr_model, format=fmt,
+            model=self.asr_model, callback=None, format=fmt,
             sample_rate=16000, language_hints=hints,
         )
         result = rec.call(str(path))
