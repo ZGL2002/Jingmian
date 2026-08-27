@@ -1,36 +1,63 @@
-// static/voice.js —— 语音模式引擎：ASR 录音、TTS 播放队列、整场混音录制
+// static/voice.js —— 实时语音引擎：流式识别（边说边出字）、攒句自动提交、
+// 流式合成首包即播、回声闸门与 barge-in 打断、整场混音录制。
 "use strict";
 
-class VoiceEngine {
+const PCM_RATE = 16000;       // 采集与识别采样率（AudioContext 固定 16k，浏览器自动重采样）
+const TTS_RATE = 22050;       // 流式合成 PCM 采样率
+const BATCH_BYTES = 3200;     // ~100ms 的 PCM16，攒批发送
+const SUBMIT_WINDOW_MS = 1200;// final 后的攒句静音窗口，超时自动提交
+const GATE_REOPEN_MS = 300;   // 播报结束后的闸门重开延迟
+const BARGE_MS = 150;         // 连续超阈值多久判定为插话
+
+class LiveVoiceEngine {
   constructor() {
-    this.ctx = new AudioContext();
-    this.recDest = this.ctx.createMediaStreamDestination();
-    this.mediaStream = null;      // 麦克风+摄像头共用流
+    this.ctx = null;
+    this.mediaStream = null;   // 麦克风+摄像头共用流
+    this.recDest = null;       // 整场混音目的地（麦克风 + TTS）
     this.micSource = null;
+    this.worklet = null;
+    this.ws = null;
     this.mixRecorder = null;
     this.mixChunks = [];
-    this.answerRecorder = null;
-    this.answerChunks = [];
-    this.sentenceQueue = [];
-    this.pending = "";
-    this.pumping = false;
-    this.turnBuffers = [];
-    this.lastTurnBuffers = null;
     this.style = "serious";
     this.sessionId = null;
     this.stopped = false;
-    // VAD 状态（app.js 挂 onSpeak/onSilence 回调做倒计时 UI）
-    this.onSpeak = null;
-    this.onSilence = null;
-    this._vadTimer = null;
-    this._vadAnalyser = null;
+    // 识别流
+    this.gateOpen = true;
+    this.batchBuf = [];
+    this.batchLen = 0;
+    this.transcriptBuf = "";
+    this.submitTimer = null;
+    // 播放队列
+    this._pending = "";
+    this.sentenceQueue = [];
+    this.pumping = false;
+    this.gen = 0;              // 打断代数：递增使在途的合成流作废
+    this.scheduled = new Set();
+    this.nextTime = 0;
+    this.pcmTail = new Uint8Array(0);
+    this.turnBuffers = [];
+    this.lastTurnBuffers = null;
+    // barge-in 阈值自适应
+    this.ambient = Infinity;
+    this.warmup = 0;
+    this.streakMs = 0;
+    // app.js 注入的回调
+    this.onCaption = null;   // (partialText) => {}
+    this.onSubmit = null;    // (finalText) => {}，自动发送
+    this.onState = null;     // ("listening"|"speaking") => {}
   }
 
   async enable() {
     this.mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: true });
+    this.ctx = new AudioContext({ sampleRate: PCM_RATE });
+    this.recDest = this.ctx.createMediaStreamDestination();
     this.micSource = this.ctx.createMediaStreamSource(this.mediaStream);
-    // 麦克风只进录制、不进扬声器，避免回声
-    this.micSource.connect(this.recDest);
+    this.micSource.connect(this.recDest); // 麦克风进整场混音（不进扬声器，避免回声）
+    await this.ctx.audioWorklet.addModule("/static/pcm-worklet.js");
+    this.worklet = new AudioWorkletNode(this.ctx, "pcm-worklet");
+    this.worklet.port.onmessage = (e) => this._onMicFrame(e.data);
+    this.micSource.connect(this.worklet);
     const cam = document.getElementById("cam-preview");
     cam.srcObject = new MediaStream(this.mediaStream.getVideoTracks());
     cam.classList.remove("hidden");
@@ -40,25 +67,116 @@ class VoiceEngine {
   beginSession(sessionId, style) {
     this.sessionId = sessionId;
     this.style = style;
+    this._connectWs();
     const mixed = new MediaStream(this.recDest.stream.getAudioTracks());
     this.mixRecorder = new MediaRecorder(mixed);
     this.mixChunks = [];
     this.mixRecorder.ondataavailable = (e) => { if (e.data && e.data.size) this.mixChunks.push(e.data); };
     this.mixRecorder.start(5000);
+    this._setState("listening");
   }
 
+  _connectWs() {
+    const proto = location.protocol === "https:" ? "wss" : "ws";
+    this.ws = new WebSocket(`${proto}://${location.host}/api/ws/voice/${this.sessionId}`);
+    this.ws.binaryType = "arraybuffer";
+    this.ws.onmessage = (ev) => {
+      let m;
+      try { m = JSON.parse(ev.data); } catch (e) { return; }
+      if (m.type === "partial") this._onPartial(m.text || "");
+      else if (m.type === "final") this._onFinal(m.text || "");
+      else if (m.type === "error") console.warn("识别流错误：", m.message);
+    };
+    this.ws.onclose = () => {
+      if (!this.stopped && this.onCaption) this.onCaption("（语音通道已断开）");
+    };
+  }
+
+  // —— 麦克风帧：PCM16 批量发送 + barge-in 检测 ——
+  _onMicFrame(f32) {
+    const bytes = new Uint8Array(f32.length * 2);
+    const dv = new DataView(bytes.buffer);
+    let sum = 0;
+    for (let i = 0; i < f32.length; i++) {
+      const s = Math.max(-1, Math.min(1, f32[i]));
+      dv.setInt16(i * 2, s < 0 ? s * 0x8000 : s * 0x7fff, true);
+      sum += f32[i] * f32[i];
+    }
+    this._detectBargeIn(Math.sqrt(sum / f32.length));
+    this.batchBuf.push(bytes);
+    this.batchLen += bytes.length;
+    if (this.batchLen >= BATCH_BYTES) this._flushPcm();
+  }
+
+  _flushPcm() {
+    if (!this.batchLen) return;
+    if (this.ws && this.ws.readyState === WebSocket.OPEN && this.gateOpen) {
+      const merged = new Uint8Array(this.batchLen);
+      let o = 0;
+      for (const b of this.batchBuf) { merged.set(b, o); o += b.length; }
+      this.ws.send(merged);
+    }
+    this.batchBuf = [];
+    this.batchLen = 0;
+  }
+
+  _detectBargeIn(rms) {
+    if (this.warmup < 5) { this.ambient = Math.min(this.ambient, rms); this.warmup++; return; }
+    const thr = Math.max(this.ambient * 3, 0.01);
+    const speaking = this.scheduled.size > 0 || this.pumping;
+    if (speaking && rms > thr) {
+      this.streakMs += (1000 * 128) / PCM_RATE; // 每帧 128 samples
+      if (this.streakMs >= BARGE_MS) this._interrupt();
+    } else {
+      this.streakMs = 0;
+    }
+  }
+
+  _interrupt() {
+    this.gen++;
+    this.sentenceQueue = [];
+    for (const src of this.scheduled) { try { src.stop(); } catch (e) { /* 已结束 */ } }
+    this.scheduled.clear();
+    this.nextTime = 0;
+    this.gateOpen = true;
+    this._setState("listening");
+  }
+
+  // —— 识别事件：字幕 + 攒句自动提交 ——
+  _onPartial(text) {
+    if (this.onCaption) this.onCaption(this.transcriptBuf + text);
+    this._armSubmit();
+  }
+
+  _onFinal(text) {
+    if (text) this.transcriptBuf += text;
+    if (this.onCaption) this.onCaption(this.transcriptBuf);
+    this._armSubmit();
+  }
+
+  _armSubmit() {
+    if (this.submitTimer) clearTimeout(this.submitTimer);
+    this.submitTimer = setTimeout(() => {
+      const text = this.transcriptBuf.trim();
+      this.transcriptBuf = "";
+      if (this.onCaption) this.onCaption("");
+      if (text && this.onSubmit) this.onSubmit(text);
+    }, SUBMIT_WINDOW_MS);
+  }
+
+  // —— 面试官语音：SSE 流式合成 → PCM 块顺序调度 ——
   feedDelta(text) {
-    this.pending += text;
-    const [finished, rest] = splitSentences(this.pending);
-    this.pending = rest;
+    this._pending += text;
+    const [finished, rest] = splitSentences(this._pending);
+    this._pending = rest;
     finished.forEach((s) => this.sentenceQueue.push(s));
     this._pump();
   }
 
   endTurn() {
-    if (this.pending.trim()) {
-      this.sentenceQueue.push(this.pending.trim());
-      this.pending = "";
+    if (this._pending.trim()) {
+      this.sentenceQueue.push(this._pending.trim());
+      this._pending = "";
       this._pump();
     }
     this.lastTurnBuffers = this.turnBuffers;
@@ -68,152 +186,119 @@ class VoiceEngine {
   async _pump() {
     if (this.pumping) return;
     this.pumping = true;
+    const gen = this.gen;
     try {
       while (this.sentenceQueue.length) {
-        await this._speak(this.sentenceQueue.shift());
+        if (gen !== this.gen) return;
+        await this._speakStream(this.sentenceQueue.shift(), gen);
       }
     } finally {
       this.pumping = false;
+      this._checkGateReopen();
     }
   }
 
-  async _speak(sentence) {
+  async _speakStream(sentence, gen) {
     try {
-      const resp = await fetch("/api/tts", {
+      const resp = await fetch("/api/tts/stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text: sentence, style: this.style }),
       });
-      if (!resp.ok) throw new Error("tts " + resp.status);
-      const mp3 = await resp.arrayBuffer();
-      const buffer = await this.ctx.decodeAudioData(mp3);
-      this.turnBuffers.push(buffer);
-      await this._play(buffer, true);
+      if (!resp.ok || !resp.body) throw new Error("tts " + resp.status);
+      const reader = resp.body.getReader();
+      const dec = new TextDecoder();
+      let sseBuf = "";
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        sseBuf += dec.decode(value, { stream: true });
+        let idx;
+        while ((idx = sseBuf.indexOf("\n\n")) >= 0) {
+          const chunk = sseBuf.slice(0, idx);
+          sseBuf = sseBuf.slice(idx + 2);
+          for (const line of chunk.split("\n")) {
+            if (!line.startsWith("data: ")) continue;
+            const data = line.slice(6);
+            if (data === "[DONE]") return;
+            if (data.startsWith("{")) { console.warn("TTS 流错误", data); return; }
+            if (gen !== this.gen) return; // 已被打断，丢弃剩余音频
+            this._schedulePcm(_b64ToBytes(data));
+          }
+        }
+      }
     } catch (e) {
-      console.warn("TTS 失败，降级为纯文字：", e);
+      console.warn("流式合成失败，降级为纯文字：", e);
     }
   }
 
-  _play(buffer, intoRecording) {
-    return new Promise((resolve) => {
-      const src = this.ctx.createBufferSource();
-      src.buffer = buffer;
-      src.connect(this.ctx.destination);
-      if (intoRecording) src.connect(this.recDest); // 面试官语音混入整场录音
-      src.onended = resolve;
-      src.start();
-    });
+  _schedulePcm(bytes) {
+    const all = new Uint8Array(this.pcmTail.length + bytes.length);
+    all.set(this.pcmTail);
+    all.set(bytes, this.pcmTail.length);
+    const usable = all.length - (all.length % 2); // PCM16 必须整样本
+    if (usable <= 0) { this.pcmTail = all; return; }
+    this.pcmTail = all.slice(usable);
+    const n = usable / 2;
+    const f32 = new Float32Array(n);
+    const dv = new DataView(all.buffer, all.byteOffset, usable);
+    for (let i = 0; i < n; i++) f32[i] = dv.getInt16(i * 2, true) / 32768;
+    const buffer = this.ctx.createBuffer(1, n, TTS_RATE);
+    buffer.copyToChannel(f32, 0);
+    this.turnBuffers.push(buffer);
+    this.gateOpen = false; // 回声闸门：播报期间不向识别流送麦克风
+    this._setState("speaking");
+    const src = this.ctx.createBufferSource();
+    src.buffer = buffer;
+    src.connect(this.ctx.destination);
+    src.connect(this.recDest); // 面试官语音混入整场录音
+    this.scheduled.add(src);
+    const startAt = Math.max(this.ctx.currentTime + 0.02, this.nextTime);
+    this.nextTime = startAt + buffer.duration;
+    src.onended = () => { this.scheduled.delete(src); this._checkGateReopen(); };
+    src.start(startAt);
+  }
+
+  _checkGateReopen() {
+    if (this.scheduled.size > 0 || this.pumping || this.sentenceQueue.length) return;
+    setTimeout(() => {
+      if (this.scheduled.size === 0 && !this.pumping) {
+        this.gateOpen = true;
+        this._setState("listening");
+      }
+    }, GATE_REOPEN_MS);
   }
 
   async replayLastTurn() {
     for (const b of this.lastTurnBuffers || []) {
-      await this._play(b, false);
+      await new Promise((resolve) => {
+        const src = this.ctx.createBufferSource();
+        src.buffer = b;
+        src.connect(this.ctx.destination); // 重听不进整场录音
+        src.onended = resolve;
+        src.start();
+      });
     }
-  }
-
-  async startAnswer(opts = {}) {
-    this.answerChunks = [];
-    this.answerRecorder = new MediaRecorder(this.mediaStream);
-    this.answerRecorder.ondataavailable = (e) => { if (e.data && e.data.size) this.answerChunks.push(e.data); };
-    this.answerRecorder.start();
-    if (opts.autoStopMs) this._startVad(opts.autoStopMs, opts.onAutoStop);
-  }
-
-  // VAD：100ms 采样 RMS；前 5 个采样（0.5s）取最小值当环境噪声基线；
-  // 开口后连续静音达 silenceMs 判定说完。阈值 = max(基线×3, 0.01)。
-  _startVad(silenceMs, onAutoStop) {
-    const analyser = this.ctx.createAnalyser();
-    analyser.fftSize = 512;
-    this.micSource.connect(analyser); // analyser 不接 destination，无回声
-    this._vadAnalyser = analyser;
-    const samples = new Float32Array(analyser.fftSize);
-    const step = 100;
-    const warmupSteps = 5;
-    let tick = 0;
-    let spoke = false;
-    let quietMs = 0;
-    let ambient = Infinity;
-    this._vadTimer = setInterval(() => {
-      analyser.getFloatTimeDomainData(samples);
-      let sum = 0;
-      for (let i = 0; i < samples.length; i++) sum += samples[i] * samples[i];
-      const rms = Math.sqrt(sum / samples.length);
-      tick++;
-      if (tick <= warmupSteps) { ambient = Math.min(ambient, rms); return; }
-      const threshold = Math.max(ambient * 3, 0.01);
-      if (rms > threshold) {
-        if (quietMs > 0 && this.onSpeak) this.onSpeak();
-        spoke = true;
-        quietMs = 0;
-      } else if (spoke) {
-        quietMs += step;
-        if (this.onSilence) this.onSilence(quietMs, silenceMs);
-        if (quietMs >= silenceMs) {
-          this._stopVad();
-          onAutoStop();
-        }
-      }
-    }, step);
-  }
-
-  _stopVad() {
-    if (this._vadTimer) { clearInterval(this._vadTimer); this._vadTimer = null; }
-    if (this._vadAnalyser) {
-      try { this.micSource.disconnect(this._vadAnalyser); } catch (e) { /* 已断开 */ }
-      this._vadAnalyser = null;
-    }
-  }
-
-  stopAnswer() {
-    this._stopVad();
-    return new Promise((resolve) => {
-      this.answerRecorder.onstop = () => resolve(new Blob(this.answerChunks, { type: "audio/webm" }));
-      this.answerRecorder.stop();
-    });
-  }
-
-  async recognize(blob) {
-    const wav = await this._toWav16k(blob);
-    const fd = new FormData();
-    fd.append("file", new Blob([wav], { type: "audio/wav" }));
-    fd.append("fmt", "wav");
-    const r = await fetch("/api/asr", { method: "POST", body: fd });
-    if (!r.ok) {
-      const d = await r.json().catch(() => ({}));
-      throw new Error(d.error || d.detail || "识别失败");
-    }
-    return (await r.json()).text;
-  }
-
-  async _toWav16k(blob) {
-    const arr = await blob.arrayBuffer();
-    const decoded = await this.ctx.decodeAudioData(arr);
-    const rate = 16000;
-    const len = Math.max(1, Math.ceil(decoded.duration * rate));
-    const off = new OfflineAudioContext(1, len, rate);
-    const src = off.createBufferSource();
-    src.buffer = decoded;
-    src.connect(off.destination);
-    src.start();
-    const rendered = await off.startRendering();
-    return encodeWav(rendered.getChannelData(0), rate);
   }
 
   async finish() {
     if (this.stopped) return;
     this.stopped = true;
-    this.endTurn();
-    this._stopVad();
+    if (this.submitTimer) clearTimeout(this.submitTimer);
+    this._interrupt();
+    if (this.ws) {
+      try { if (this.ws.readyState === WebSocket.OPEN) this.ws.send('{"type":"stop"}'); } catch (e) { /* 忽略 */ }
+      try { this.ws.close(); } catch (e) { /* 忽略 */ }
+    }
     await new Promise((resolve) => {
       if (!this.mixRecorder || this.mixRecorder.state === "inactive") return resolve();
       this.mixRecorder.onstop = () => resolve();
       this.mixRecorder.stop();
     });
-    if (this.mediaStream) {
-      this.mediaStream.getTracks().forEach((t) => t.stop());
-    }
+    if (this.mediaStream) this.mediaStream.getTracks().forEach((t) => t.stop());
     const cam = document.getElementById("cam-preview");
     if (cam) cam.srcObject = null;
+    if (this.ctx) { try { await this.ctx.close(); } catch (e) { /* 忽略 */ } }
     if (!this.sessionId || !this.mixChunks.length) return;
     const blob = new Blob(this.mixChunks, { type: "audio/webm" });
     for (let i = 0; i < 3; i++) {
@@ -225,6 +310,10 @@ class VoiceEngine {
       } catch (e) { /* 重试 */ }
     }
     alert("整场音频上传失败，本场录音未能保存");
+  }
+
+  _setState(s) {
+    if (this.onState) this.onState(s);
   }
 }
 
@@ -246,22 +335,12 @@ function splitSentences(buf) {
   return [out.filter(Boolean), buf.slice(start)];
 }
 
-// 单声道 16kHz PCM16 WAV 编码（浏览器不能直接产出 wav，ASR 不认 webm）
-function encodeWav(samples, rate) {
-  const buf = new ArrayBuffer(44 + samples.length * 2);
-  const v = new DataView(buf);
-  const ws = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
-  ws(0, "RIFF"); v.setUint32(4, 36 + samples.length * 2, true); ws(8, "WAVE"); ws(12, "fmt ");
-  v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
-  v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true);
-  ws(36, "data"); v.setUint32(40, samples.length * 2, true);
-  let o = 44;
-  for (let i = 0; i < samples.length; i++, o += 2) {
-    const s = Math.max(-1, Math.min(1, samples[i]));
-    v.setInt16(o, s < 0 ? s * 0x8000 : s * 0x7fff, true);
-  }
-  return buf;
+function _b64ToBytes(b64) {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
 }
 
-window.VoiceEngine = VoiceEngine;
+window.LiveVoiceEngine = LiveVoiceEngine;
 window.splitSentences = splitSentences; // 便于控制台自测
