@@ -73,8 +73,10 @@ def list_sessions(user_root: Path, user_id: str) -> list[dict]:
             "session_id": d.name,
             "company": meta.get("company", ""),
             "position": meta.get("position", ""),
+            "style": meta.get("style", ""),
             "question_count": sum(1 for e in entries if e.get("role") == "interviewer"),
             "has_report": (d / "report.md").exists(),
+            "has_audio": (d / "audio" / "interview.webm").exists(),
             "created_at": d.name[:19],
         })
     return out
@@ -90,6 +92,15 @@ def offload_long_answer(session_dir: Path, index: int, text: str, user_id: str) 
 def save_report(session_dir: Path, markdown: str, user_id: str) -> Path:
     p = session_dir / "report.md"
     write_owned(p, user_id, markdown)
+    return p
+
+
+def save_session_audio(session_dir: Path, data: bytes) -> Path:
+    """整场面试混音留档：audio/interview.webm（一场一个文件，覆盖旧值）。"""
+    d = session_dir / "audio"
+    d.mkdir(parents=True, exist_ok=True)
+    p = d / "interview.webm"
+    p.write_bytes(data)
     return p
 
 

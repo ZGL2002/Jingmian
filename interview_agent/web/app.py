@@ -15,7 +15,7 @@ from ..models import ExperienceEntry
 from ..persona import get_style, list_styles, resolve_voice
 from ..resume import extract_text
 from ..security import check_owner
-from ..storage import list_sessions, read_jsonl, timestamp
+from ..storage import list_sessions, read_jsonl, save_session_audio, timestamp
 from .audio import ASR_FORMATS, AudioError
 from .auth import TokenAuthMiddleware, AUTH_COOKIE, token_matches
 from .events import sse_format, sse_stream_async
@@ -217,6 +217,24 @@ def create_app(config: dict, llm=None, audio=None) -> FastAPI:
         if not p.is_file():
             raise HTTPException(404, "记录不存在")
         return read_jsonl(p)
+
+    @app.post("/api/sessions/{session_id}/audio")
+    async def upload_audio(session_id: str, file: UploadFile = File(...)):
+        session_dir = _session_path(session_id)
+        data = await file.read()
+        if not data:
+            raise HTTPException(400, "音频为空")
+        if len(data) > 500 * 1024 * 1024:
+            raise HTTPException(400, "音频过大（限 500MB）")
+        save_session_audio(session_dir, data)
+        return {"ok": True, "url": f"/api/sessions/{session_id}/audio"}
+
+    @app.get("/api/sessions/{session_id}/audio")
+    def download_audio(session_id: str):
+        p = _session_path(session_id) / "audio" / "interview.webm"
+        if not p.is_file():
+            raise HTTPException(404, "音频不存在")
+        return FileResponse(p, media_type="audio/webm")
 
     @app.get("/api/experiences")
     def get_experiences():
