@@ -51,8 +51,15 @@ class InterviewTask:
         self.busy = True
         self.last_activity = time.time()
 
+    def _drain_repo_injection(self) -> None:
+        """轮次边界注入后台仓库分析（不打断 assistant tool_calls 与结果的消息顺序）。"""
+        text = self.session.drain_repo_injection()
+        if text:
+            self.queue.publish(status_event("github_ready"))
+
     def _run(self) -> None:
         try:
+            self._drain_repo_injection()  # 审读极快完成的场景：开场前注入
             turn = self.agent.llm.chat(
                 self.session.messages, tools=self.agent.registry.schemas()
             )
@@ -70,6 +77,7 @@ class InterviewTask:
                     continue
                 if item[0] == "end":
                     break
+                self._drain_repo_injection()  # 用户回答期间审读完成的常规注入点
                 self.session.add_candidate_message(item[1])
                 cfg = self.session.config
                 if needs_emergency_offload(
@@ -80,6 +88,7 @@ class InterviewTask:
                         cfg.keep_recent_messages,
                         "（上下文保护压缩）",
                     )
+                    self.session.reapply_repo_analysis()
                 self.queue.publish(status_event("thinking"))
                 result = self.agent.run_turn(
                     on_delta=lambda t: self.queue.publish(delta_event(t))

@@ -6,6 +6,7 @@ from pathlib import Path
 from ..agent import ToolAgent
 from ..models import SessionConfig
 from ..persona import get_style
+from ..repo_agent import start_repo_analysis
 from ..resume import parse_resume
 from ..security import PathPolicy
 from ..session import InterviewSession
@@ -14,6 +15,13 @@ from ..tools import default_registry
 from ..tools.base import ToolContext
 from .events import EventQueue, snapshot_event
 from .runner import InterviewTask
+
+
+def _log_repo_progress(slug: str, i: int, n: int, stage: str) -> None:
+    if stage == "start":
+        print(f"[github] 正在分析 {slug}（{i}/{n}）")
+    elif stage == "skipped":
+        print(f"[github] {slug} 分析已跳过")
 
 
 class SessionManager:
@@ -45,8 +53,13 @@ class SessionManager:
             jd_text=jd_text,
             experience_refs=list(experiences or []),
             style=get_style(style).key,
+            github_analysis_enabled=bool(self.config.get("github_analysis_enabled", True)),
+            github_token=self.config.get("github_token", ""),
+            github_max_repos=int(self.config.get("github_max_repos", 3)),
         )
         session = InterviewSession(cfg, resume)
+        # 后台审读简历中的 GitHub 仓库：start_session 立即返回，分析在面试开场问答期间完成
+        start_repo_analysis(session, self.llm, on_progress=_log_repo_progress)
         session.start()
         registry = default_registry()
         tool_ctx = ToolContext(
@@ -55,6 +68,7 @@ class SessionManager:
             policy=PathPolicy([session.session_dir]),
             transcript_path=session.transcript_path,
             wrap_allowed=session.can_auto_wrap,
+            github_token=cfg.github_token,
         )
         agent = ToolAgent(self.llm, registry, session, tool_ctx)
         task = InterviewTask(user_id, session, agent, EventQueue(), self.idle_timeout)

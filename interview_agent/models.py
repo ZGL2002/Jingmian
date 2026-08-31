@@ -19,6 +19,7 @@ class ResumeProject:
     name: str
     description: str = ""
     tech_stack: list[str] = field(default_factory=list)
+    github_url: str = ""
 
 
 @dataclass
@@ -28,6 +29,16 @@ class ResumeDocument:
     skills: list[str] = field(default_factory=list)
     projects: list[ResumeProject] = field(default_factory=list)
     summary: str = ""
+    github_repos: list[str] = field(default_factory=list)
+
+
+@dataclass
+class RepoAnalysis:
+    """单个 GitHub 仓库的分析结果（ok=有分析文本，skipped=降级跳过）。"""
+    slug: str
+    status: str = "ok"
+    reason: str = ""
+    text: str = ""
 
 
 @dataclass
@@ -46,6 +57,9 @@ class SessionConfig:
     jd_text: str = ""
     experience_refs: list[ExperienceEntry] = field(default_factory=list)
     style: str = "serious"
+    github_analysis_enabled: bool = True
+    github_token: str = ""
+    github_max_repos: int = 3
 
 
 @dataclass

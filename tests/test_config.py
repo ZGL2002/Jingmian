@@ -73,3 +73,28 @@ def test_require_api_key_dashscope_missing_names_right_env(tmp_path, monkeypatch
         raise AssertionError("应当抛出 KeyError")
     except KeyError as e:
         assert "DASHSCOPE_API_KEY" in str(e)
+
+
+def test_load_config_github_defaults(tmp_path, monkeypatch):
+    env = tmp_path / ".env"
+    env.write_text("DEEPSEEK_API_KEY=sk-test\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    for k in ("INTERVIEW_GITHUB_ANALYSIS", "GITHUB_TOKEN", "INTERVIEW_GITHUB_MAX_REPOS"):
+        monkeypatch.delenv(k, raising=False)
+    cfg = load_config(str(env))
+    assert cfg["github_analysis_enabled"] is True
+    assert cfg["github_token"] == ""
+    assert cfg["github_max_repos"] == 3
+
+
+def test_load_config_github_env_overrides(tmp_path, monkeypatch):
+    env = tmp_path / ".env"
+    env.write_text("DEEPSEEK_API_KEY=sk-test\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("INTERVIEW_GITHUB_ANALYSIS", "0")
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp_x")
+    monkeypatch.setenv("INTERVIEW_GITHUB_MAX_REPOS", "5")
+    cfg = load_config(str(env))
+    assert cfg["github_analysis_enabled"] is False
+    assert cfg["github_token"] == "ghp_x"
+    assert cfg["github_max_repos"] == 5

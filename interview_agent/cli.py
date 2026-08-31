@@ -8,6 +8,7 @@ from .session import InterviewSession
 from .agent import ToolAgent, _strip_role_leak
 from .evaluate import run_evaluation
 from .llm import LLMError, create_llm
+from .repo_agent import start_repo_analysis
 from .tools import default_registry
 from .tools.base import ToolContext
 from .security import PathPolicy
@@ -18,6 +19,15 @@ END_COMMANDS = {"结束", "exit", "/end"}
 PASTE_END = "END"
 RESUME_SUFFIXES = {".txt", ".md", ".pdf"}
 END_SENTINEL = "__END__"
+
+
+def _github_progress(slug: str, i: int, n: int, stage: str) -> None:
+    if stage == "start":
+        print(f"正在分析简历中的 GitHub 仓库 {slug}（{i}/{n}）…")
+    elif stage == "skipped":
+        print(f"仓库 {slug} 分析已跳过（网络/权限问题），面试照常进行")
+    elif stage.startswith("error"):
+        print(f"仓库审读异常：{stage}，面试照常进行")
 
 
 def _default_user_id(cfg: dict) -> str:
@@ -98,8 +108,18 @@ def run_cli(cfg: dict, llm=None, user_inputs: list[str] | None = None) -> str:
         model=cfg.get("model", "deepseek-chat"),
         answer_offload_threshold=int(cfg.get("answer_offload_threshold", 100_000)),
         context_safety_ratio=float(cfg.get("context_safety_ratio", 0.8)),
+        github_analysis_enabled=bool(cfg.get("github_analysis_enabled", True)),
+        github_token=cfg.get("github_token", ""),
+        github_max_repos=int(cfg.get("github_max_repos", 3)),
     )
+    if llm is None:
+        llm = create_llm(
+            require_api_key(), model=config.model,
+            provider=cfg.get("provider", "deepseek"),
+        )
     session = InterviewSession(config, resume)
+    # 后台审读简历中的 GitHub 仓库：pending_repos 立即进开场提示词，分析在回答期间完成
+    start_repo_analysis(session, llm, on_progress=_github_progress)
     session.start()
     registry = default_registry()
     tool_ctx = ToolContext(
@@ -108,14 +128,12 @@ def run_cli(cfg: dict, llm=None, user_inputs: list[str] | None = None) -> str:
         policy=PathPolicy([session.session_dir]),
         transcript_path=session.transcript_path,
         wrap_allowed=session.can_auto_wrap,
+        github_token=config.github_token,
     )
-    if llm is None:
-        llm = create_llm(
-            require_api_key(), model=config.model,
-            provider=cfg.get("provider", "deepseek"),
-        )
     agent = ToolAgent(llm, registry, session, tool_ctx)
 
+    if session.drain_repo_injection():  # 审读极快完成的场景：开场前注入（与 runner 一致）
+        print("（GitHub 代码审读完成，面试官已收到分析资料）")
     opening = llm.chat(session.messages, tools=registry.schemas())
     opening_text = _strip_role_leak(opening.content or "你好，我是面试官，我们开始。")
     session.add_interviewer_message(opening_text)  # OPENING 状态不计题数
@@ -137,10 +155,13 @@ def run_cli(cfg: dict, llm=None, user_inputs: list[str] | None = None) -> str:
             break
         if not text.strip():
             continue
+        if session.drain_repo_injection():
+            print("（GitHub 代码审读完成，面试官已收到分析资料）")
         session.add_candidate_message(text)
         if needs_emergency_offload(session.messages, config.max_context_chars, config.context_safety_ratio):
             atomic_write(session.session_dir / "summary.md", "上下文保护：滑动窗口已压缩")
             session.messages = build_sliding_window(session.messages, config.keep_recent_messages, "（上下文保护压缩）")
+            session.reapply_repo_analysis()
         result = agent.run_turn()
         print(result.content)
         if result.wrap_requested or session.state is SessionState.WRAPPING:

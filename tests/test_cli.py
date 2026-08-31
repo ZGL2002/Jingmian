@@ -121,3 +121,91 @@ def test_run_cli_scanned_pdf_raises_system_exit(tmp_path):
     }
     with pytest.raises(SystemExit):
         run_cli(cfg, llm=CliLLM([]), user_inputs=[str(pdf), "END"])
+
+
+def _canned_github(monkeypatch):
+    """预置 GitHub API 响应：alice/shop 元信息 + 文件树 + README。"""
+    import base64
+    import io
+    import json as _json
+
+    class FakeResponse(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    def fake_urlopen(req, timeout=None):
+        url = req.full_url
+        if url.endswith("/repos/alice/shop"):
+            payload = {"default_branch": "main", "description": "商城", "language": "Python", "stargazers_count": 1}
+        elif "git/trees" in url:
+            payload = {"tree": [{"path": "README.md", "type": "blob", "size": 12}]}
+        elif "contents/README.md" in url:
+            payload = {"content": base64.b64encode("# shop\n".encode()).decode(), "encoding": "base64"}
+        else:
+            raise AssertionError(f"意外请求: {url}")
+        return FakeResponse(_json.dumps(payload).encode())
+
+    monkeypatch.setattr("interview_agent.github.urlopen", fake_urlopen)
+
+
+def test_run_cli_parallel_repo_analysis_injection(tmp_path, monkeypatch, capsys):
+    """开面试不等待：审读在回答期间后台完成，下一轮注入面试官资料。"""
+    from interview_agent.repo_agent import start_repo_analysis
+
+    _canned_github(monkeypatch)
+    monkeypatch.setattr(
+        "interview_agent.cli.start_repo_analysis",
+        lambda s, l, on_progress=None: start_repo_analysis(s, l, on_progress=on_progress, synchronous=True),
+    )
+    cfg = {
+        "api_key": "sk-test", "model": "deepseek-chat",
+        "min_questions": 3, "language": "zh",
+        "answer_offload_threshold": 100_000, "context_safety_ratio": 0.8,
+        "session_root": str(tmp_path),
+        "github_analysis_enabled": True, "github_token": "tk", "github_max_repos": 1,
+    }
+    llm = CliLLM([
+        AssistantTurn(content="## 项目结构概述\n单模块商城"),   # 审读子 agent
+        AssistantTurn(content="你好，我是面试官"),               # 开场
+        AssistantTurn(content="第一个问题：整体架构？"),         # 审读完成前的架构题
+        AssistantTurn(content="## 技术准确性\n8 分。"),          # 评估
+    ])
+    inputs = ["项目：商城 https://github.com/alice/shop", "END", "a1", "", "结束"]
+    report = run_cli(cfg, llm=llm, user_inputs=inputs)
+    sdir = Path(report).parent
+    prompt = (sdir / "prompt.md").read_text(encoding="utf-8")
+    assert "后台" in prompt and "alice/shop" in prompt       # 开场引导段
+    assert "GitHub 仓库代码分析" not in prompt               # 分析不进首条提示词
+    transcript = [json.loads(line) for line in (sdir / "transcript.jsonl").read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert any(e.get("role") == "note" and "GitHub" in e["content"] for e in transcript)
+    assert (sdir / "repos" / "alice__shop" / "analysis.md").exists()
+    out = capsys.readouterr().out
+    assert "已收到" in out
+
+
+def test_run_cli_github_disabled_keeps_prompt_clean(tmp_path, monkeypatch, capsys):
+    def boom(req, timeout=None):
+        raise AssertionError("不应触网")
+
+    monkeypatch.setattr("interview_agent.github.urlopen", boom)
+    cfg = {
+        "api_key": "sk-test", "model": "deepseek-chat",
+        "min_questions": 3, "language": "zh",
+        "answer_offload_threshold": 100_000, "context_safety_ratio": 0.8,
+        "session_root": str(tmp_path),
+        "github_analysis_enabled": False,
+    }
+    llm = CliLLM([
+        AssistantTurn(content="你好，我是面试官"),
+        AssistantTurn(content="第一个问题：介绍项目？"),
+        AssistantTurn(content="## 技术准确性\n8 分。"),
+    ])
+    inputs = ["项目：商城 https://github.com/alice/shop", "END", "a1", "", "结束"]
+    report = run_cli(cfg, llm=llm, user_inputs=inputs)
+    prompt = (Path(report).parent / "prompt.md").read_text(encoding="utf-8")
+    assert "GitHub 仓库代码分析" not in prompt
+    assert not (Path(report).parent / "repos").exists()
+    assert "正在分析" not in capsys.readouterr().out

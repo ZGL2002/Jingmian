@@ -9,6 +9,7 @@ import threading
 import uuid
 from pathlib import Path
 from fastapi import FastAPI, Form, HTTPException, Request, Response, UploadFile, File, WebSocket
+from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 import markdown
@@ -184,7 +185,10 @@ def create_app(config: dict, llm=None, audio=None) -> FastAPI:
             e for e in list_experiences(Path(config["session_root"]), WEB_USER_ID)
             if e.entry_id in set(experience_ids)
         ]
-        sid = manager.start_session(
+        # start_session 含简历解析与文件 IO，且后台审读线程从这里启动；
+        # 放线程池避免重负载解析独占 asyncio 事件循环（SSE/语音通道）
+        sid = await run_in_threadpool(
+            manager.start_session,
             WEB_USER_ID,
             company=company.strip(),
             position=position.strip(),

@@ -160,6 +160,7 @@ function handleEvent(e) {
       break;
     case "status":
       if (e.status === "thinking") setThinking(true);
+      if (e.status === "github_ready") addChat("system", "GitHub 代码审读完成，面试官已收到分析资料");
       if (e.status === "evaluating") { setThinking(true); addChat("system", "评估报告生成中…"); }
       if (e.status === "done") finishUiAfterDone();
       break;

@@ -124,3 +124,59 @@ def test_busy_answer_rejected(tmp_path):
     r2 = c.post("/api/answer", json={"session_id": sid, "text": "回答2"})
     assert r2.status_code == 400
     assert "思考中" in r2.json()["error"]
+
+
+def test_start_session_runs_off_event_loop(tmp_path):
+    """/api/session/start 中的仓库分析不得独占事件循环：分析期间循环仍能调度回调。
+
+    用独立线程的看门狗探测：往事件循环投递一个回调，1 秒内未被执行即视为循环被冻结。
+    看门狗负责放行 slow_start，因此阻塞场景下测试也是快速失败而非挂死。
+    """
+    import asyncio
+    import threading
+    import httpx
+    from interview_agent.web.app import create_app
+
+    cfg = {
+        "session_root": str(tmp_path), "min_questions": 1,
+        "language": "zh", "model": "deepseek-chat", "web_token": "secret",
+    }
+    app = create_app(cfg, llm=AppLLM([]))
+    entered = threading.Event()
+    release = threading.Event()
+    pinged: list[bool] = []
+    verdict: dict = {}
+
+    def slow_start(*a, **kw):
+        entered.set()
+        release.wait(timeout=5)
+        return "sid_github_analysis"
+
+    app.state.manager.start_session = slow_start
+
+    async def scenario():
+        loop = asyncio.get_running_loop()
+
+        def watchdog():
+            if not entered.wait(3):
+                verdict["error"] = "start 未进入处理"
+                release.set()
+                return
+            loop.call_soon_threadsafe(lambda: pinged.append(True))
+            time.sleep(1.0)
+            verdict["alive"] = bool(pinged)
+            release.set()
+
+        threading.Thread(target=watchdog, daemon=True).start()
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://t") as client:
+            login = await client.post("/api/login", json={"token": "secret"})
+            assert login.status_code == 200, login.text
+            resp = await client.post(
+                "/api/session/start", data={"resume_text": "项目：x github.com/a/b"}
+            )
+            assert resp.json()["session_id"] == "sid_github_analysis"
+
+    asyncio.run(scenario())
+    assert "error" not in verdict, verdict.get("error")
+    assert verdict.get("alive") is True, "start 端点独占了事件循环：仓库分析应放到线程池"

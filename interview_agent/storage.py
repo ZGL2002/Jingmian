@@ -4,6 +4,7 @@ import json
 import random
 import string
 import time
+import uuid
 from pathlib import Path
 
 
@@ -21,7 +22,8 @@ def create_session_dir(session_root: Path, user_id: str) -> Path:
 
 def atomic_write(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
+    # tmp 名带随机后缀：后台审读线程与面试中工具可能写同一路径，固定名会互相抢 tmp
+    tmp = path.with_name(f"{path.name}.{uuid.uuid4().hex[:8]}.tmp")
     tmp.write_text(content, encoding="utf-8")
     tmp.replace(path)
 

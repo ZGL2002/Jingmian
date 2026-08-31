@@ -40,3 +40,26 @@ def test_offload_and_report(tmp_path):
     r = save_report(d, "# 报告", "alice")
     assert r.name == "report.md"
     assert r.read_text(encoding="utf-8").startswith("<!-- owner: alice -->")
+
+
+def test_atomic_write_concurrent_same_path_no_errors(tmp_path):
+    """跨线程写同一路径（后台审读缓存 vs 面试中工具缓存）不得抛异常。"""
+    import threading
+
+    from interview_agent.storage import atomic_write
+
+    p = tmp_path / "f.txt"
+    errors: list = []
+
+    def write_many(tag: str) -> None:
+        try:
+            for i in range(100):
+                atomic_write(p, f"{tag}-{i}")
+        except Exception as e:  # noqa: BLE001
+            errors.append(e)
+
+    t1 = threading.Thread(target=write_many, args=("a",))
+    t2 = threading.Thread(target=write_many, args=("b",))
+    t1.start(); t2.start(); t1.join(); t2.join()
+    assert errors == []
+    assert p.read_text(encoding="utf-8").startswith(("a-", "b-"))

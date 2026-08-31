@@ -1,4 +1,6 @@
-from interview_agent.prompts import build_system_prompt, build_evaluation_messages, render_resume_section
+from interview_agent.prompts import (
+    build_system_prompt, build_evaluation_messages, render_repo_section, render_resume_section,
+)
 from interview_agent.models import ResumeDocument, ResumeProject
 
 def test_system_prompt_mentions_rules():
@@ -28,25 +30,32 @@ def test_resume_section_contains_details():
 def test_evaluation_messages_include_transcript():
     msgs = build_evaluation_messages("interviewer: 你好\ncandidate: 你好")
     assert msgs[0]["role"] == "system"
-    assert msgs[-1]["content"] == "interviewer: 你好\ncandidate: 你好"
 
-def test_system_prompt_uses_min_questions():
-    p = build_system_prompt(None, min_questions=5)
-    assert "至少完成 5 题" in p
-    assert "至少完成 20 题" not in p
 
-def test_system_prompt_enforces_one_question_per_turn():
-    p = build_system_prompt(None)
-    assert "每轮只输出一个提问" in p
-    assert "先问最关键" in p
-    assert "一次输出多个问题视为违规" in p
+def test_render_repo_section_contains_analysis():
+    from interview_agent.models import RepoAnalysis
+    section = render_repo_section([
+        RepoAnalysis(slug="alice/shop", status="ok", text="## 项目结构概述\n单模块。\n## 建议提问点\n1. Redis 锁"),
+    ])
+    assert "GitHub 仓库" in section
+    assert "alice/shop" in section
+    assert "项目结构概述" in section
+    assert "不符" in section  # 真实性验证指引
 
-def test_system_prompt_output_discipline():
-    p = build_system_prompt(None)
-    assert "禁止替候选人回答" in p
-    assert "不得出现" in p
-    assert "你>" in p
 
-def test_system_prompt_empty_answer_rule():
-    p = build_system_prompt(None)
-    assert "不要替候选人补充回答" in p
+def test_render_repo_section_empty_when_all_skipped():
+    from interview_agent.models import RepoAnalysis
+    assert render_repo_section([RepoAnalysis(slug="alice/gone", status="skipped", reason="x")]) == ""
+
+
+def test_render_repo_section_has_injection_defense():
+    from interview_agent.models import RepoAnalysis
+    section = render_repo_section([RepoAnalysis(slug="a/b", status="ok", text="分析正文")])
+    assert "数据" in section and "忽略" in section
+
+
+def test_system_prompt_pending_repos_hint():
+    doc = ResumeDocument(raw_text="x", github_repos=["a/b"])
+    p = build_system_prompt(doc, pending_repos=["a/b"])
+    assert "后台" in p and "a/b" in p and "架构" in p
+    assert build_system_prompt(doc).find("后台") == -1

@@ -13,6 +13,7 @@ class ToolContext:
     policy: PathPolicy
     transcript_path: Path
     wrap_allowed: Callable[[], bool] = lambda: True
+    github_token: str = ""
 
 
 class Tool:
