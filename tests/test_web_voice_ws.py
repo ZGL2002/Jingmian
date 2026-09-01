@@ -64,6 +64,9 @@ class FakeRecognition:
         pass
 
     def send_audio_frame(self, frame):
+        if frame == b"ERR":
+            self.callback.on_error(types.SimpleNamespace(message="会话已过期"))
+            return
         text = frame.decode("utf-8", "replace")
         self.callback.on_event(FakeStreamResult(text, True))  # 直接给 final
 
@@ -147,3 +150,17 @@ def test_ws_streams_final_events(tmp_path, monkeypatch):
         ws.send_text('{"type":"stop"}')
     assert FakeRecognition.last.stopped
     assert FakeRecognition.last.kwargs["format"] == "pcm"
+
+
+def test_ws_closes_on_recognition_error(tmp_path, monkeypatch):
+    install_fake(monkeypatch)
+    c = make_client(tmp_path)
+    login(c)
+    sid = start_session(c)
+    with pytest.raises(WebSocketDisconnect) as e:
+        with c.websocket_connect(f"/api/ws/voice/{sid}") as ws:
+            ws.send_bytes(b"ERR")
+            ev = ws.receive_json()
+            assert ev == {"type": "error", "message": "会话已过期"}
+            ws.receive_json()  # 等待服务端关闭
+    assert e.value.code == 1011

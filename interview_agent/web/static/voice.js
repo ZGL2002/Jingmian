@@ -88,12 +88,35 @@ class LiveVoiceEngine {
       else if (m.type === "final") this._onFinal(m.text || "");
       else if (m.type === "error") console.warn("识别流错误：", m.message);
     };
+    this.ws.onopen = () => {
+      this.wsAttempts = 0;
+      this._setState("listening");
+    };
     this.ws.onclose = () => {
-      if (!this.stopped && this.onCaption) this.onCaption("（语音通道已断开）");
+      if (this.stopped) return;
+      this._scheduleReconnect();
     };
   }
 
-  // —— 麦克风帧：PCM16 批量发送 + barge-in 检测 ——
+  // 通道断开自动重连：服务重启/网络闪断/识别会话闲置超时都能恢复
+  _scheduleReconnect() {
+    const MAX = 10;
+    if (this.stopped || !this.sessionId) return;
+    this.wsAttempts = (this.wsAttempts || 0) + 1;
+    if (this.wsAttempts > MAX) {
+      this._setState("listening");
+      if (this.onCaption) {
+        this.onCaption("（语音通道已断开：请确认服务在运行；可刷新页面继续本场面试，打字不受影响）");
+      }
+      return;
+    }
+    this._setState("reconnecting");
+    setTimeout(() => {
+      if (!this.stopped && this.wsAttempts <= MAX) this._connectWs();
+    }, 2000);
+  }
+
+  // —— 麦克风帧：PCM16 批量发送 + 闸门关闭期静音保活 + barge-in 检测 ——
   _onMicFrame(f32) {
     const bytes = new Uint8Array(f32.length * 2);
     const dv = new DataView(bytes.buffer);
@@ -104,6 +127,14 @@ class LiveVoiceEngine {
       sum += f32[i] * f32[i];
     }
     this._detectBargeIn(Math.sqrt(sum / f32.length));
+    if (!this.gateOpen) {
+      // 播报期间不发真实音频（防回声），但每 5s 补一帧全零静音保活，
+      // 否则识别会话长时间无数据会被服务端闲置断开
+      const now = performance.now();
+      if (now - (this._lastKeepalive || 0) < 5000) return;
+      this._lastKeepalive = now;
+      bytes.fill(0);
+    }
     this.batchBuf.push(bytes);
     this.batchLen += bytes.length;
     if (this.batchLen >= BATCH_BYTES) this._flushPcm();
@@ -111,7 +142,7 @@ class LiveVoiceEngine {
 
   _flushPcm() {
     if (!this.batchLen) return;
-    if (this.ws && this.ws.readyState === WebSocket.OPEN && this.gateOpen) {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       const merged = new Uint8Array(this.batchLen);
       let o = 0;
       for (const b of this.batchBuf) { merged.set(b, o); o += b.length; }

@@ -24,6 +24,11 @@ async def run_voice_websocket(websocket: WebSocket, audio, on_event_loop=None) -
         while True:
             ev = await events.get()
             await websocket.send_json(ev)
+            if ev.get("type") == "error":
+                # 识别会话已死（超时/网络错误）：主动断开，客户端会自动
+                # 重连并建立全新识别会话，避免后续语音被静默丢弃
+                await websocket.close(code=1011)
+                return
 
     pump_task = asyncio.create_task(pump())
     try:

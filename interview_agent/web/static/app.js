@@ -86,7 +86,9 @@ function setVoiceState(s) {
   const el = $("voice-status");
   if (!voice) { el.classList.add("hidden"); return; }
   el.classList.remove("hidden");
-  el.textContent = s === "speaking" ? "🔊 面试官说话中（可直接开口打断）" : "🎙 实时聆听中（直接说话即可）";
+  if (s === "speaking") el.textContent = "🔊 面试官说话中（可直接开口打断）";
+  else if (s === "reconnecting") el.textContent = "⚠ 语音通道断开，自动重连中…";
+  else el.textContent = "🎙 实时聆听中（直接说话即可）";
 }
 
 function showCaption(text) {
