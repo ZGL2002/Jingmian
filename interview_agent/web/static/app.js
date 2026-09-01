@@ -8,6 +8,20 @@ let lastInterviewerBox = null;
 let es = null;
 let thinkingSince = null;
 let pendingAnswers = [];      // 面试官回应期间收到的语音续说，turn_end 后自动补发
+let sessionDone = false;      // 本场是否已结束（done 或已请求结束）
+
+async function stopVoiceNow() {
+  // 立即停止语音会话：关通道/停识别/停录制并上传整场音频。
+  // 结束面试、评估开始、开始新面试时都要调用，不能等 done 事件——
+  // 评估阶段服务端 busy，语音继续识别只会堆积"思考中"错误
+  if (!voice) return;
+  const v = voice;
+  voice = null;
+  pendingAnswers = [];
+  setVoiceState(null);
+  showCaption("");
+  await v.finish().catch(() => {});
+}
 
 async function api(path, options) {
   const resp = await fetch(path, options);
@@ -146,10 +160,12 @@ async function resumeSession(sid) {
   const meta = transcript.find((e) => e.role === "meta") || {};
   if (meta.style) applyTheme(meta.style); // 语音模式不跨刷新恢复，文本照常
   if (snap.state === "done") {
+    sessionDone = true;
     setControls(false);
     addReportLink();
     return;
   }
+  sessionDone = false;
   setControls(true);
   setThinking(!!snap.busy);
   openStream(snap.last_seq || 0);
@@ -164,7 +180,11 @@ function handleEvent(e) {
     case "status":
       if (e.status === "thinking") setThinking(true);
       if (e.status === "github_ready") addChat("system", "GitHub 代码审读完成，面试官已收到分析资料");
-      if (e.status === "evaluating") { setThinking(true); addChat("system", "评估报告生成中…"); }
+      if (e.status === "evaluating") {
+        setThinking(true);
+        addChat("system", "评估报告生成中…");
+        stopVoiceNow(); // 问答已结束，评估期间不再收音，避免堆积发送
+      }
       if (e.status === "done") finishUiAfterDone();
       break;
     case "delta":
@@ -189,11 +209,12 @@ function handleEvent(e) {
 }
 
 function finishUiAfterDone() {
+  sessionDone = true;
   setThinking(false);
   setControls(false);
   addReportLink();
   if (es) es.close();
-  if (voice) voice.finish(); // 停录制停摄像头并上传整场音频
+  if (voice) voice.finish(); // 停录制停摄像头并上传整场音频（通常已在评估开始时停止）
 }
 
 function openStream(lastId) {
@@ -238,6 +259,7 @@ function flushPendingAnswers() {
 
 async function startInterview() {
   $("start-error").textContent = "";
+  sessionDone = false;
   if (voice) { await voice.finish(); voice = null; } // 上一场语音收尾
   pendingAnswers = [];
   if ($("cfg-voice").checked) {
@@ -316,9 +338,10 @@ async function endInterview() {
   } catch (e) {
     addChat("system", e.message);
   }
-  // done 事件到达时 finishUiAfterDone 里统一 voice.finish()；
-  // 这里兜底：若 SSE 已断（如页面异常），1s 后主动收尾
-  setTimeout(() => { if (voice && voice.mixRecorder && voice.mixRecorder.state === "inactive") voice.finish(); }, 1000);
+  // 面试已结束：立即停语音（不等评估完成的 done 事件），
+  // 否则评估期间还在识别并发送，只会收到"面试官思考中"
+  sessionDone = true;
+  await stopVoiceNow();
 }
 
 async function loadHistory() {
@@ -459,8 +482,26 @@ async function uploadBackground() {
   }
 }
 
+async function resetForNewInterview() {
+  // 点导航"新面试"：完整重置回配置状态（旧对话/语音/SSE/URL 全部清理）
+  if (currentSessionId && !sessionDone) {
+    const go = confirm("当前面试还在进行中，确定放弃并开始新面试吗？");
+    if (!go) return;
+  }
+  await stopVoiceNow();
+  if (es) { es.close(); es = null; }
+  currentSessionId = null;
+  sessionDone = false;
+  clearSessionInUrl();
+  $("chat").innerHTML = "";
+  $("config-panel").open = true;
+  setControls(false);
+  setThinking(false);
+  switchView("interview");
+}
+
 document.querySelectorAll("nav button[data-view]").forEach((b) => {
-  b.onclick = () => switchView(b.dataset.view);
+  b.onclick = () => (b.dataset.view === "interview" ? resetForNewInterview() : switchView(b.dataset.view));
 });
 $("btn-start").onclick = startInterview;
 $("btn-send").onclick = sendAnswer;
