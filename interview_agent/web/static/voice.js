@@ -5,7 +5,7 @@
 const PCM_RATE = 16000;       // 采集与识别采样率（AudioContext 固定 16k，浏览器自动重采样）
 const TTS_RATE = 22050;       // 流式合成 PCM 采样率
 const BATCH_BYTES = 3200;     // ~100ms 的 PCM16，攒批发送
-const SUBMIT_WINDOW_MS = 2000;// final 后的攒句静音窗口，超时自动提交（想更跟手可调小，想更能容忍停顿可调大）
+const SUBMIT_WINDOW_MS = 4200;// 句尾事件（停止说话约 800ms 后到达）之后的攒句窗口，合计≈停止说话后 5s 自动发送；想更跟手可调小
 const GATE_REOPEN_MS = 300;   // 播报结束后的闸门重开延迟
 const BARGE_MS = 150;         // 连续超阈值多久判定为插话
 
