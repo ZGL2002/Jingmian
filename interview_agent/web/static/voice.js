@@ -6,8 +6,9 @@ const PCM_RATE = 16000;       // 采集与识别采样率（AudioContext 固定 
 const TTS_RATE = 22050;       // 流式合成 PCM 采样率
 const BATCH_BYTES = 3200;     // ~100ms 的 PCM16，攒批发送
 const SUBMIT_WINDOW_MS = 4200;// 句尾事件（停止说话约 800ms 后到达）之后的攒句窗口，合计≈停止说话后 5s 自动发送；想更跟手可调小
-const GATE_REOPEN_MS = 300;   // 播报结束后的闸门重开延迟
+const GATE_REOPEN_MS = 600;   // 播报结束后的闸门重开延迟（留出扬声器尾音衰减时间）
 const BARGE_MS = 150;         // 连续超阈值多久判定为插话
+const FILLER_CHARS = "嗯呃啊哦噢唉诶哈嘿呀吧呢哎"; // 纯语气词不作为回答发送
 
 class LiveVoiceEngine {
   constructor() {
@@ -164,7 +165,10 @@ class LiveVoiceEngine {
       const text = this.transcriptBuf.trim();
       this.transcriptBuf = "";
       if (this.onCaption) this.onCaption("");
-      if (text && this.onSubmit) this.onSubmit(text);
+      // 纯语气词/超短音（如听题时下意识的"嗯"）丢弃，等真正的回答，
+      // 避免面试官刚问完就被"嗯。"顶掉这道题
+      if (!text || isFillerOnly(text)) return;
+      if (this.onSubmit) this.onSubmit(text);
     }, SUBMIT_WINDOW_MS);
   }
 
@@ -345,6 +349,15 @@ function _b64ToBytes(b64) {
   for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
   return out;
 }
+
+// 判定是否纯语气词：去掉标点后为空、过短（单字"对/好"多半也是应答声）、或全部由语气词组成
+function isFillerOnly(text) {
+  const stripped = text.replace(/[\s，。？！,.?!；;、~～]/g, "");
+  if (!stripped) return true;
+  if (stripped.length < 2) return true;
+  return [...stripped].every((c) => FILLER_CHARS.includes(c));
+}
+window.isFillerOnly = isFillerOnly;
 
 window.LiveVoiceEngine = LiveVoiceEngine;
 window.splitSentences = splitSentences; // 便于控制台自测

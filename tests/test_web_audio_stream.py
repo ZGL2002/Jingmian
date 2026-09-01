@@ -106,6 +106,7 @@ def test_stream_recognizer_params_and_events(monkeypatch):
     assert kw["format"] == "pcm"
     assert kw["sample_rate"] == 16000
     assert kw["max_sentence_silence"] == 800
+    assert kw["disfluency_removal_enabled"] is True  # ASR 层直接去语气词（嗯/呃）
     assert kw["language_hints"] == ["zh", "en"]
     assert FakeStreamRecognition.last.started
     assert FakeStreamRecognition.stopped

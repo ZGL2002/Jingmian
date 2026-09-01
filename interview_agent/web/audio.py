@@ -149,6 +149,7 @@ class StreamRecognizer:
         self._rec = Recognition(
             model=self.engine.asr_model, callback=_Cb(), format="pcm",
             sample_rate=16000, max_sentence_silence=STREAM_SILENCE_MS,
+            disfluency_removal_enabled=True,  # 服务端去语气词（嗯/呃等），减少"嗯。"被当回答
             language_hints=hints,
         )
         self._rec.start()
