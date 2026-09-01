@@ -5,7 +5,7 @@
 const PCM_RATE = 16000;       // 采集与识别采样率（AudioContext 固定 16k，浏览器自动重采样）
 const TTS_RATE = 22050;       // 流式合成 PCM 采样率
 const BATCH_BYTES = 3200;     // ~100ms 的 PCM16，攒批发送
-const SUBMIT_WINDOW_MS = 1200;// final 后的攒句静音窗口，超时自动提交
+const SUBMIT_WINDOW_MS = 2000;// final 后的攒句静音窗口，超时自动提交（想更跟手可调小，想更能容忍停顿可调大）
 const GATE_REOPEN_MS = 300;   // 播报结束后的闸门重开延迟
 const BARGE_MS = 150;         // 连续超阈值多久判定为插话
 
@@ -143,12 +143,16 @@ class LiveVoiceEngine {
   }
 
   // —— 识别事件：字幕 + 攒句自动提交 ——
+  // 播报期间（闸门关闭）到达的事件一律丢弃：不戴耳机时是回声，戴耳机时是
+  // 发送断开前的在途残留，混入会导致重复/碎片发送
   _onPartial(text) {
+    if (!this.gateOpen) return;
     if (this.onCaption) this.onCaption(this.transcriptBuf + text);
     this._armSubmit();
   }
 
   _onFinal(text) {
+    if (!this.gateOpen) return;
     if (text) this.transcriptBuf += text;
     if (this.onCaption) this.onCaption(this.transcriptBuf);
     this._armSubmit();

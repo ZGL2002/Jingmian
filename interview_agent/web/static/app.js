@@ -7,6 +7,7 @@ let pendingBuf = "";
 let lastInterviewerBox = null;
 let es = null;
 let thinkingSince = null;
+let pendingAnswers = [];      // 面试官回应期间收到的语音续说，turn_end 后自动补发
 
 async function api(path, options) {
   const resp = await fetch(path, options);
@@ -176,6 +177,7 @@ function handleEvent(e) {
       pendingBox = null;
       pendingBuf = "";
       if (voice) { voice.endTurn(); attachReplayButton(lastInterviewerBox); }
+      flushPendingAnswers(); // 续说补发：本轮生成已结束（busy 已释放）
       break;
     case "error":
       setThinking(false);
@@ -209,21 +211,49 @@ function openStream(lastId) {
   es.onerror = () => {}; // 自动重连；服务器按 Last-Event-ID 只补发未收到的事件
 }
 
+function postAnswer(text) {
+  return api("/api/answer", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ session_id: currentSessionId, text }),
+  });
+}
+
+function isBusyError(e) {
+  return String(e && e.message || "").includes("思考中");
+}
+
+function flushPendingAnswers() {
+  if (!pendingAnswers.length || !currentSessionId) return;
+  const text = pendingAnswers.join("\n");
+  pendingAnswers = [];
+  addChat("candidate", text);
+  postAnswer(text).catch((e) => {
+    if (isBusyError(e)) pendingAnswers.unshift(text); // 仍在忙，下轮再试
+    else addChat("system", "发送失败：" + e.message);
+  });
+}
+
 async function startInterview() {
   $("start-error").textContent = "";
   if (voice) { await voice.finish(); voice = null; } // 上一场语音收尾
+  pendingAnswers = [];
   if ($("cfg-voice").checked) {
     voice = new LiveVoiceEngine();
     voice.onCaption = showCaption;
     voice.onState = setVoiceState;
     voice.onSubmit = (text) => {
-      // 识别攒句完成，自动作为回答发送（错字靠字幕口头更正）
+      // 识别攒句完成，自动作为回答发送；撞上"面试官思考中"则入队，
+      // 待其本轮结束（turn_end）自动补发，中途停顿的续说不丢失
       addChat("candidate", text);
-      api("/api/answer", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ session_id: currentSessionId, text }),
-      }).catch((e) => addChat("system", "发送失败：" + e.message));
+      postAnswer(text).catch((e) => {
+        if (isBusyError(e)) {
+          pendingAnswers.push(text);
+          addChat("system", "（面试官正在回应，你的补充将在其结束后自动发送）");
+        } else {
+          addChat("system", "发送失败：" + e.message);
+        }
+      });
     };
     try {
       await voice.enable();
@@ -269,11 +299,7 @@ function sendAnswer() {
   if (!text.trim() || !currentSessionId) return;
   addChat("candidate", text);
   $("answer-input").value = "";
-  api("/api/answer", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ session_id: currentSessionId, text }),
-  }).catch((e) => addChat("system", "发送失败：" + e.message));
+  postAnswer(text).catch((e) => addChat("system", "发送失败：" + e.message));
 }
 
 async function endInterview() {
