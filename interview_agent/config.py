@@ -45,6 +45,8 @@ def load_config(env_path: str | None = None) -> dict:
         "github_token": os.environ.get("GITHUB_TOKEN", ""),
         "github_max_repos": int(os.environ.get("INTERVIEW_GITHUB_MAX_REPOS", "3")),
         "dashscope_api_key": os.environ.get("DASHSCOPE_API_KEY", ""),
+        # 语音引擎选择：未设置时按现状推断（有 DASHSCOPE_API_KEY 即 dashscope）
+        "audio_provider": os.environ.get("INTERVIEW_AUDIO_PROVIDER", ""),
         "asr_model": os.environ.get("INTERVIEW_ASR_MODEL", "paraformer-realtime-v2"),
         "tts_model": os.environ.get("INTERVIEW_TTS_MODEL", "cosyvoice-v2"),
         "tts_voice": os.environ.get("INTERVIEW_TTS_VOICE", ""),

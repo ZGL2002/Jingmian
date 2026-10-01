@@ -79,10 +79,16 @@ def create_app(config: dict, llm=None, audio=None) -> FastAPI:
     def styles():
         return [{"key": s.key, "label": s.label} for s in list_styles()]
 
+    def _audio_disabled_hint() -> str:
+        if config.get("audio_provider") == "local":
+            return "语音功能未启用（本地语音引擎未正确加载）"
+        return ("语音功能未启用（未配置 DASHSCOPE_API_KEY；"
+                "使用本地 FunASR/CosyVoice 请设 INTERVIEW_AUDIO_PROVIDER=local）")
+
     @app.post("/api/asr")
     async def asr(file: UploadFile = File(...), fmt: str = Form("wav")):
         if audio is None:
-            raise HTTPException(404, "语音功能未启用（未配置 DASHSCOPE_API_KEY）")
+            raise HTTPException(404, _audio_disabled_hint())
         if fmt not in ASR_FORMATS:
             raise HTTPException(400, "不支持的音频格式")
         data = await file.read()
@@ -99,7 +105,7 @@ def create_app(config: dict, llm=None, audio=None) -> FastAPI:
     @app.post("/api/tts")
     def tts(payload: dict):
         if audio is None:
-            raise HTTPException(404, "语音功能未启用（未配置 DASHSCOPE_API_KEY）")
+            raise HTTPException(404, _audio_disabled_hint())
         text = str(payload.get("text", "")).strip()
         if not text or len(text) > 500:
             raise HTTPException(400, "文本为空或超过 500 字")
@@ -113,13 +119,13 @@ def create_app(config: dict, llm=None, audio=None) -> FastAPI:
             mp3 = audio.synthesize(text, voice, style.tts_speed)
         except AudioError as e:
             raise HTTPException(502, str(e))
-        return Response(content=mp3, media_type="audio/mpeg")
+        return Response(content=mp3, media_type=getattr(audio.engine, "SYNTH_MIME", "audio/mpeg"))
 
     @app.post("/api/tts/stream")
     def tts_stream(payload: dict):
         """流式合成：SSE 逐块下发 base64 PCM（22.05k 单声道 16bit），结束标志 [DONE]。"""
         if audio is None:
-            raise HTTPException(404, "语音功能未启用（未配置 DASHSCOPE_API_KEY）")
+            raise HTTPException(404, _audio_disabled_hint())
         text = str(payload.get("text", "")).strip()
         if not text or len(text) > 500:
             raise HTTPException(400, "文本为空或超过 500 字")

@@ -16,11 +16,7 @@ def main() -> None:
     )
     app = create_app(
         cfg, llm=llm,
-        audio=AudioService.from_config(
-            cfg.get("dashscope_api_key", ""),
-            tts_model=cfg.get("tts_model", "cosyvoice-v2"),
-            asr_model=cfg.get("asr_model", "paraformer-realtime-v2"),
-        ),
+        audio=AudioService.from_config(cfg),
     )
     uvicorn.run(
         app,

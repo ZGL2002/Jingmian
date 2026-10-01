@@ -106,9 +106,36 @@ def test_service_wraps_unexpected_errors(tmp_path, monkeypatch):
         svc.transcribe(b"BYTES")
 
 
-def test_from_config_empty_key_is_none():
-    assert AudioService.from_config("") is None
-    assert AudioService.from_config("sk-x") is not None
+def test_from_config_provider_branches():
+    # 无 key 无 provider：整体禁用（现状保持）
+    assert AudioService.from_config({}) is None
+    # 有 DASHSCOPE_API_KEY：自动走 dashscope
+    svc = AudioService.from_config({"dashscope_api_key": "sk-x"})
+    assert isinstance(svc.engine, DashScopeEngine)
+    assert svc.engine.tts_model == "cosyvoice-v2"
+    # 显式 dashscope 但缺 key：禁用而非报错
+    assert AudioService.from_config({"audio_provider": "dashscope"}) is None
+    svc2 = AudioService.from_config({
+        "audio_provider": "dashscope", "dashscope_api_key": "sk-x",
+        "tts_model": "cosyvoice-v1", "asr_model": "fun-asr-realtime",
+    })
+    assert svc2.engine.tts_model == "cosyvoice-v1"
+    assert svc2.engine.asr_model == "fun-asr-realtime"
+    # 本地引擎阶段 3 提供；未知 provider 直接报错
+    with pytest.raises(ValueError, match="local"):
+        AudioService.from_config({"audio_provider": "local"})
+    with pytest.raises(ValueError, match="不支持的语音引擎"):
+        AudioService.from_config({"audio_provider": "xxx"})
+
+
+def test_load_config_audio_provider(tmp_path, monkeypatch):
+    from interview_agent.config import load_config
+    env = tmp_path / ".env"
+    env.write_text("", encoding="utf-8")
+    monkeypatch.delenv("INTERVIEW_AUDIO_PROVIDER", raising=False)
+    assert load_config(str(env))["audio_provider"] == ""
+    monkeypatch.setenv("INTERVIEW_AUDIO_PROVIDER", "local")
+    assert load_config(str(env))["audio_provider"] == "local"
 
 
 def test_load_config_tts_keys(tmp_path, monkeypatch):

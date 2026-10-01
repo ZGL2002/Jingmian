@@ -140,3 +140,20 @@ def test_engine_synthesize_stream(monkeypatch):
 def test_stream_recognizer_requires_engine():
     with pytest.raises(TypeError):
         StreamRecognizer()  # engine/on_event 必填
+
+
+def test_engine_stream_session_factory(monkeypatch):
+    # 流式识别已下沉引擎层：引擎工厂直接产出可用会话
+    install_fake_stream_dashscope(monkeypatch)
+    engine = DashScopeEngine("sk")
+    events = []
+    session = engine.create_stream_recognizer(events.append)
+    session.start()
+    session.feed(b"x")
+    session.stop()
+    assert events == [
+        {"type": "partial", "text": "听x"},
+        {"type": "final", "text": "你好x"},
+    ]
+    assert FakeStreamRecognition.last.started
+    assert FakeStreamRecognition.stopped

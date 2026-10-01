@@ -108,6 +108,19 @@ def test_audio_disabled_returns_404(tmp_path):
     assert c.post("/api/asr", files={"file": ("a.wav", io.BytesIO(b"x"), "audio/wav")}).status_code == 404
 
 
+def test_audio_disabled_hint_mentions_local_option(tmp_path):
+    # 404 文案按 provider 动态生成：提示可切换本地语音
+    c = make_client(tmp_path)  # audio=None，未配置 key
+    login(c)
+    r = c.post("/api/tts", json={"text": "x", "style": "serious"})
+    assert "DASHSCOPE_API_KEY" in r.json()["detail"]
+    assert "INTERVIEW_AUDIO_PROVIDER=local" in r.json()["detail"]
+    r2 = c.post("/api/tts/stream", json={"text": "x", "style": "serious"})
+    assert "INTERVIEW_AUDIO_PROVIDER=local" in r2.json()["detail"]
+    r3 = c.post("/api/asr", files={"file": ("a.wav", io.BytesIO(b"x"), "audio/wav")})
+    assert "INTERVIEW_AUDIO_PROVIDER=local" in r3.json()["detail"]
+
+
 def test_asr_bad_format_and_size(tmp_path):
     c = make_client(tmp_path, engine=FakeEngine())
     login(c)

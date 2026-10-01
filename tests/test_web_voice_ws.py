@@ -1,5 +1,4 @@
 # tests/test_web_voice_ws.py
-import sys
 import types
 import pytest
 from fastapi.testclient import TestClient
@@ -23,9 +22,35 @@ class AppLLM:
         yield StreamEnd(turn)
 
 
+class FakeEngineSession:
+    """引擎级 fake：把 FakeRecognition 的回调翻译成事件协议（与 DashScope 会话同构）。"""
+
+    def __init__(self, on_event):
+        self._on_event = on_event
+        self._rec = None
+
+    def start(self):
+        self._rec = FakeRecognition(callback=self)
+
+    def feed(self, pcm):
+        self._rec.send_audio_frame(pcm)
+
+    def stop(self):
+        self._rec.stop()
+
+    def on_event(self, result):
+        s = result.get_sentence()
+        self._on_event({"type": "final" if s.get("end") else "partial", "text": s.get("text", "")})
+
+    def on_error(self, result):
+        self._on_event({"type": "error", "message": str(getattr(result, "message", "识别错误"))})
+
+
 class FakeStreamEngine:
-    asr_model = "qwen-audio-3.0-asr-flash-streaming"
     tts_model = "qwen-audio-3.0-tts-flash"
+
+    def create_stream_recognizer(self, on_event):
+        return FakeEngineSession(on_event)
 
     def transcribe_file(self, path, fmt):
         return ""
@@ -43,12 +68,6 @@ class FakeStreamResult:
 
     def get_sentence(self):
         return self._s
-
-
-class FakeRecognitionResult:
-    @staticmethod
-    def is_sentence_end(s):
-        return s.get("end") is True
 
 
 class FakeRecognition:
@@ -72,25 +91,6 @@ class FakeRecognition:
 
     def stop(self):
         self.stopped = True
-
-
-def install_fake(monkeypatch):
-    dashscope = types.ModuleType("dashscope")
-    audio_mod = types.ModuleType("dashscope.audio")
-    asr_mod = types.ModuleType("dashscope.audio.asr")
-    asr_mod.Recognition = FakeRecognition
-    asr_mod.RecognitionCallback = object
-    asr_mod.RecognitionResult = FakeRecognitionResult
-    tts_mod = types.ModuleType("dashscope.audio.tts_v2")
-    tts_mod.SpeechSynthesizer = object
-    tts_mod.ResultCallback = object
-    tts_mod.AudioFormat = types.SimpleNamespace(PCM_22050HZ_MONO_16BIT="pcm16")
-    audio_mod.asr = asr_mod
-    audio_mod.tts_v2 = tts_mod
-    dashscope.audio = audio_mod
-    for name, mod in [("dashscope", dashscope), ("dashscope.audio", audio_mod),
-                      ("dashscope.audio.asr", asr_mod), ("dashscope.audio.tts_v2", tts_mod)]:
-        monkeypatch.setitem(sys.modules, name, mod)
 
 
 def make_client(tmp_path, with_audio=True):
@@ -138,8 +138,7 @@ def test_ws_audio_disabled(tmp_path):
     assert e.value.code == 4403
 
 
-def test_ws_streams_final_events(tmp_path, monkeypatch):
-    install_fake(monkeypatch)
+def test_ws_streams_final_events(tmp_path):
     c = make_client(tmp_path)
     login(c)
     sid = start_session(c)
@@ -149,11 +148,9 @@ def test_ws_streams_final_events(tmp_path, monkeypatch):
         assert ev == {"type": "final", "text": "你好面试官"}
         ws.send_text('{"type":"stop"}')
     assert FakeRecognition.last.stopped
-    assert FakeRecognition.last.kwargs["format"] == "pcm"
 
 
-def test_ws_closes_on_recognition_error(tmp_path, monkeypatch):
-    install_fake(monkeypatch)
+def test_ws_closes_on_recognition_error(tmp_path):
     c = make_client(tmp_path)
     login(c)
     sid = start_session(c)
