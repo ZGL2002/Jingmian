@@ -142,8 +142,9 @@ def _parse_wav_header(buf: bytes) -> tuple[int, int, int, int] | None:
 class _FunASRStreamSession:
     """FunASR runtime 2pass 流式识别会话：16k PCM 帧 → 事件回调（协议与 DashScope 会话一致）。
 
-    FunASR 的 offline 通道产出整句（带标点），映射为 final；
-    online 通道产出中间结果，映射为 partial。连接断开映射 error，触发既有重连路径。
+    FunASR 的 offline 通道产出整句（带标点），映射为 final；online 通道产出的是
+    **增量片段**，而前端契约（DashScope 语义）要求 partial 为累计整句，这里做累积转换。
+    连接断开映射 error，触发既有重连路径。
     """
 
     def __init__(self, ws_url: str, on_event: Callable[[dict], None],
@@ -154,6 +155,8 @@ class _FunASRStreamSession:
         self._conn = None
         self._reader = None
         self._closing = False
+        self._partial_buf = ""
+        self._final_flush = threading.Event()
 
     def start(self) -> None:
         from websockets.sync.client import connect
@@ -188,13 +191,17 @@ class _FunASRStreamSession:
                     continue
                 data = json.loads(msg)
                 text = str(data.get("text") or "").strip()
+                if data.get("is_final"):
+                    self._final_flush.set()
                 if not text:
                     continue
                 mode = str(data.get("mode") or "")
                 if data.get("is_final") or mode == "2pass-offline":
                     self._on_event({"type": "final", "text": text})
+                    self._partial_buf = ""
                 else:
-                    self._on_event({"type": "partial", "text": text})
+                    self._partial_buf += text
+                    self._on_event({"type": "partial", "text": self._partial_buf})
         except Exception as e:  # noqa: BLE001 - 断线等异常经 error 事件透出
             if not self._closing:
                 self._on_event({"type": "error", "message": f"本地识别会话中断：{e}"})
@@ -210,6 +217,9 @@ class _FunASRStreamSession:
                 self._conn.send(json.dumps({"is_speaking": False}))
             except Exception:  # noqa: BLE001 - 会话已死时收尾尽力而为
                 pass
+            # 等服务端 2pass 离线通道补发最后一句 final（is_final 标记）再关连接，
+            # 语义对齐 DashScope stop 的优雅收尾
+            self._final_flush.wait(timeout=3.0)
             try:
                 self._conn.close()
             except Exception:  # noqa: BLE001

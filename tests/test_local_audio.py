@@ -164,7 +164,11 @@ def install_fake_httpx(monkeypatch):
 
 
 def test_stream_session_protocol(monkeypatch):
-    install_fake_websockets(monkeypatch, fake_connect_factory())
+    def handler(payload, conn):
+        # 模拟真实服务端：收到 is_speaking=false 后补发最后一句 final（is_final 标记）
+        if isinstance(payload, str) and json.loads(payload).get("is_speaking") is False:
+            conn.push({"mode": "2pass-offline", "text": "收尾句。", "is_final": True})
+    install_fake_websockets(monkeypatch, fake_connect_factory(handler))
     engine = LocalEngine(funasr_ws_url="ws://127.0.0.1:10095")
     events = []
     s = engine.create_stream_recognizer(events.append)
@@ -176,11 +180,17 @@ def test_stream_session_protocol(monkeypatch):
     assert cfg["mode"] == "2pass"
     assert cfg["wav_format"] == "pcm"
     assert cfg["audio_fs"] == 16000
-    # online 通道 → partial；offline 通道（整句带标点）→ final
-    conn.push({"mode": "2pass-online", "text": "你好"})
-    assert wait_for(lambda: {"type": "partial", "text": "你好"} in events)
-    conn.push({"mode": "2pass-offline", "text": "你好，面试官。"})
-    assert wait_for(lambda: {"type": "final", "text": "你好，面试官。"} in events)
+    # online 通道 → partial（FunASR 给的是增量片段，须累积为整句）；offline 通道（整句带标点）→ final
+    conn.push({"mode": "2pass-online", "text": "欢迎大"})
+    assert wait_for(lambda: {"type": "partial", "text": "欢迎大"} in events)
+    conn.push({"mode": "2pass-online", "text": "家来"})
+    assert wait_for(lambda: {"type": "partial", "text": "欢迎大家来"} in events)
+    conn.push({"mode": "2pass-offline", "text": "欢迎大家来体验。"})
+    assert wait_for(lambda: {"type": "final", "text": "欢迎大家来体验。"} in events)
+    # final 之后 partial 缓冲重置：新一轮增量从头累积
+    conn.push({"mode": "2pass-online", "text": "下一"})
+    conn.push({"mode": "2pass-online", "text": "句话"})
+    assert wait_for(lambda: {"type": "partial", "text": "下一句话"} in events)
     # 空文本结果不透出（FunASR 闲置时会发空 text）
     n = len(events)
     conn.push({"mode": "2pass-online", "text": ""})
@@ -189,9 +199,10 @@ def test_stream_session_protocol(monkeypatch):
     # 16k PCM 帧以二进制直传
     s.feed(b"\x01\x00" * 100)
     assert b"\x01\x00" * 100 in conn.binary_sent
-    # stop 发送 is_speaking=false 结束标志
+    # stop 发送 is_speaking=false 结束标志，并等服务端 final flush（is_final）后再关连接
     s.stop()
     assert conn.json_sent[-1] == {"is_speaking": False}
+    assert wait_for(lambda: {"type": "final", "text": "收尾句。"} in events)
 
 
 def test_stream_session_connect_error(monkeypatch):
