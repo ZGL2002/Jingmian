@@ -7,10 +7,36 @@
 ```bash
 python -m pip install -e ".[dev]"
 cp .env.example .env
-# 编辑 .env，填入密钥：
+# 编辑 .env，填入密钥（三选一，详见下方「模型矩阵」）：
 #   DeepSeek：DEEPSEEK_API_KEY
 #   阿里云百炼：INTERVIEW_PROVIDER=dashscope + DASHSCOPE_API_KEY（模型默认 qwen-plus，可选 qwen-max/qwen-turbo/deepseek-v3）
+#   智谱 GLM：INTERVIEW_PROVIDER=zhipu + ZHIPU_API_KEY（免费档 glm-4.7-flash，模型名以控制台为准）
 ```
+
+## 模型矩阵
+
+| 能力 | 云端方案 | 本地方案 |
+|---|---|---|
+| 对话 LLM（面试官 + 评估报告） | DeepSeek（默认）/ 阿里云百炼 qwen / 智谱 GLM 免费档 | — |
+| 语音识别 ASR | 百炼 paraformer-realtime-v2 | FunASR runtime（自部署，CPU 即可实时） |
+| 语音合成 TTS | 百炼 cosyvoice-v2 | CosyVoice（自部署，需 GPU） |
+
+对话与语音两条通道互不绑定，可任意组合（如 智谱做对话 + 本地引擎做语音）。
+评估报告与对话共用同一 LLM，切换 provider 自动生效；`.env` 改回旧 provider 即可秒级回退。
+
+**语音本地部署**（`INTERVIEW_AUDIO_PROVIDER=local`，不设置时按有无 `DASHSCOPE_API_KEY` 自动推断）：
+
+- `FUNASR_WS_URL`（默认 `ws://127.0.0.1:10095`）——FunASR runtime server：
+  Docker 镜像 `registry.cn-hangzhou.aliyuncs.com/funasr_repo/funasr-runtime-sdk`，
+  2pass 流式模式，自带 VAD/标点/数字正则化；
+- `COSYVOICE_URL`（默认 `http://127.0.0.1:9880`）——CosyVoice server（CosyVoice2-0.5B，
+  Turing+ 显卡 fp16 约 3GB 显存；Pascal 老卡 fp32 约 5GB），需暴露 OpenAI 兼容端点
+  `POST /v1/audio/speech` 返回 WAV（如 [jianchang512/cosyvoice-api](https://github.com/jianchang512/cosyvoice-api)，
+  默认端口 9933，用 `COSYVOICE_URL` 指向实际地址即可）；
+  音色填本地 server 支持的名称，`INTERVIEW_TTS_VOICE` 全局或 `INTERVIEW_TTS_VOICE_<风格>` 按面试官风格指定。
+
+本地模式已知差异：`/api/asr` 整段识别仅支持 wav/pcm（云端另支持 mp3 等）；
+云端 ASR 的服务端去语气词不再生效（浏览器端纯语气词过滤仍保留，句内语气词可后续在 FunASR 后处理增强）。
 
 ## 使用
 
@@ -102,7 +128,9 @@ qwen-audio-3.0-tts-flash/plus 用其自身音色表（如 longanfengyue、longan
 ASR 识别模型可用 `INTERVIEW_ASR_MODEL` 更换（默认 paraformer-realtime-v2，
 可选 fun-asr-realtime、qwen-audio-3.0-asr-flash-streaming 等）。
 
-未配置 DashScope key 时语音功能自动禁用，文本面试不受影响。建议佩戴耳机，
+语音服务两种形态：`.env` 配置 `DASHSCOPE_API_KEY` 走云端（Paraformer + CosyVoice）；
+或按上文「模型矩阵」本地部署 FunASR + CosyVoice 后设 `INTERVIEW_AUDIO_PROVIDER=local` 全本地运行。
+两者都未配置时语音功能自动禁用，文本面试不受影响。建议佩戴耳机，
 否则回放中面试官声音会因麦克风拾到扬声器而有轻微重叠。
 
 ## 飞书渠道
