@@ -27,12 +27,13 @@ class WavPcmStreamConverter:
 
     跨块保持状态：WAV 头未凑齐前攒字节；重采样维护浮点读取位置；
     立体声下混前保留不完整帧的字节。采样率一致且单声道时直通（逐字节保真）。
+    输入支持 16bit 整数（format=1）与 32bit 浮点（format=3，本地 CosyVoice 常见输出）。
     """
 
     def __init__(self, target_rate: int = TTS_TARGET_RATE):
         self._target = target_rate
         self._buf = bytearray()
-        self._meta: tuple[int, int, int, int] | None = None  # (data_offset, channels, rate, bits)
+        self._meta: tuple[int, int, int, int, int] | None = None  # (offset, channels, rate, bits, fmt)
         self._pend: list[int] = []   # 待重采样的样本（int16 值，已下混为单声道）
         self._pos = 0.0              # 重采样读取位置（_pend 的浮点索引）
         self._frame_rest = b""       # 不足一个声道帧的残留字节
@@ -44,9 +45,11 @@ class WavPcmStreamConverter:
             if meta is None:
                 return b""  # 头还没凑齐
             self._meta = meta
-            data_offset, _, _, bits = meta
-            if bits != 16:
-                raise AudioError(f"本地 TTS 输出为 {bits}bit，仅支持 16bit PCM")
+            data_offset = meta[0]
+            if not self._supported():
+                raise AudioError(
+                    f"本地 TTS 输出为 format={meta[4]}/{meta[3]}bit，仅支持 16bit PCM 或 32bit float"
+                )
             del self._buf[:data_offset]
         data = bytes(self._buf)
         self._buf.clear()
@@ -65,14 +68,20 @@ class WavPcmStreamConverter:
         self._pos = 0.0
         return _pack_i16(out)
 
+    def _supported(self) -> bool:
+        _, _, _, bits, fmt = self._meta
+        return (fmt == 1 and bits == 16) or (fmt == 3 and bits == 32)
+
     def _passthrough(self) -> bool:
-        _, channels, rate, _ = self._meta or (0, 1, self._target, 16)
-        return channels == 1 and rate == self._target
+        _, channels, rate, bits, _ = self._meta
+        return channels == 1 and rate == self._target and bits == 16
 
     def _append_samples(self, data: bytes) -> None:
-        _, channels, _, _ = self._meta
+        _, channels, _, _, _ = self._meta
+        is_float = self._meta[4] == 3
+        bytes_per_sample = 4 if is_float else 2
         data = self._frame_rest + data
-        frame_size = channels * 2
+        frame_size = channels * bytes_per_sample
         n_frames, rest = divmod(len(data), frame_size)
         if rest:
             self._frame_rest = data[len(data) - rest:]
@@ -80,15 +89,21 @@ class WavPcmStreamConverter:
             self._frame_rest = b""
         if n_frames == 0:
             return
-        samples = struct.unpack(f"<{n_frames * channels}h", data[:n_frames * frame_size])
-        if channels == 1:
-            self._pend.extend(samples)
+        raw = data[:n_frames * frame_size]
+        n_values = n_frames * channels
+        if is_float:
+            values = struct.unpack(f"<{n_values}f", raw)
+            values = [_f32_to_i16(v) for v in values]
         else:
-            for i in range(0, len(samples), channels):
-                self._pend.append(round(sum(samples[i:i + channels]) / channels))
+            values = struct.unpack(f"<{n_values}h", raw)
+        if channels == 1:
+            self._pend.extend(values)
+        else:
+            for i in range(0, len(values), channels):
+                self._pend.append(round(sum(values[i:i + channels]) / channels))
 
     def _resample_available(self) -> bytes:
-        _, _, rate, _ = self._meta
+        _, _, rate, _, _ = self._meta
         step = rate / self._target
         out: list[int] = []
         while self._pos + 1 < len(self._pend):
@@ -110,18 +125,22 @@ class WavPcmStreamConverter:
         return int(a + (b - a) * frac)
 
 
+def _f32_to_i16(v: float) -> int:
+    return max(-32768, min(32767, round(v * 32767)))
+
+
 def _pack_i16(values: list[int]) -> bytes:
     return struct.pack(f"<{len(values)}h", *values)
 
 
-def _parse_wav_header(buf: bytes) -> tuple[int, int, int, int] | None:
-    """解析 RIFF/WAV 头，返回 (data 起始偏移, 声道数, 采样率, 位深)；字节不足返回 None。"""
+def _parse_wav_header(buf: bytes) -> tuple[int, int, int, int, int] | None:
+    """解析 RIFF/WAV 头，返回 (data 起始偏移, 声道数, 采样率, 位深, 编码格式)；字节不足返回 None。"""
     if len(buf) < 12 or buf[0:4] != b"RIFF" or buf[8:12] != b"WAVE":
         if len(buf) >= 12:
             raise AudioError("本地 TTS 返回的不是 WAV 音频")
         return None
     offset = 12
-    channels = rate = bits = None
+    channels = rate = bits = fmt_tag = None
     while True:
         if offset + 8 > len(buf):
             return None
@@ -131,11 +150,11 @@ def _parse_wav_header(buf: bytes) -> tuple[int, int, int, int] | None:
         if chunk_id == b"fmt ":
             if body + size > len(buf):
                 return None
-            _, channels, rate, _, _, bits = struct.unpack_from("<HHIIHH", buf, body)
+            fmt_tag, channels, rate, _, _, bits = struct.unpack_from("<HHIIHH", buf, body)
         elif chunk_id == b"data":
             if channels is None:
                 raise AudioError("WAV 头缺少 fmt 块")
-            return body, channels, rate, bits
+            return body, channels, rate, bits, fmt_tag
         offset = body + size + (size & 1)  # chunk 按 2 字节对齐
 
 
