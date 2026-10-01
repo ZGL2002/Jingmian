@@ -132,10 +132,22 @@ class DashScopeClient(OpenAICompatibleClient):
         super().__init__(api_key, model)
 
 
-def create_llm(api_key: str, model: str = "deepseek-chat", provider: str = "deepseek") -> LLMClient:
-    """LLM 客户端工厂：未来多用户 BYOK 只改这里传入的 api_key 来源。"""
+class ZhipuClient(OpenAICompatibleClient):
+    """智谱开放平台（GLM 系列），OpenAI 兼容模式端点。"""
+
+    BASE_URL = "https://open.bigmodel.cn/api/paas/v4"
+    LABEL = "智谱"
+
+    def __init__(self, api_key: str, model: str = "glm-4.7-flash"):
+        super().__init__(api_key, model)
+
+
+def create_llm(api_key: str, model: str | None = None, provider: str = "deepseek") -> LLMClient:
+    """LLM 客户端工厂：未来多用户 BYOK 只改这里传入的 api_key 来源。model 省略时用各 provider 默认模型。"""
     if provider == "deepseek":
-        return DeepSeekClient(api_key=api_key, model=model)
+        return DeepSeekClient(api_key=api_key, model=model or "deepseek-chat")
     if provider == "dashscope":
-        return DashScopeClient(api_key=api_key, model=model)
+        return DashScopeClient(api_key=api_key, model=model or "qwen-plus")
+    if provider == "zhipu":
+        return ZhipuClient(api_key=api_key, model=model or "glm-4.7-flash")
     raise ValueError(f"不支持的 provider: {provider}")

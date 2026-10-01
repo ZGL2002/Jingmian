@@ -75,6 +75,43 @@ def test_require_api_key_dashscope_missing_names_right_env(tmp_path, monkeypatch
         assert "DASHSCOPE_API_KEY" in str(e)
 
 
+def test_load_config_zhipu_key(tmp_path, monkeypatch):
+    # setenv 而非只写 env 文件：load_dotenv 非 override 模式下，
+    # 之前测试遗留的 INTERVIEW_PROVIDER 会盖住文件内容
+    env_file = tmp_path / "empty.env"
+    env_file.write_text("", encoding="utf-8")
+    monkeypatch.setenv("INTERVIEW_PROVIDER", "zhipu")
+    monkeypatch.delenv("ZHIPU_API_KEY", raising=False)
+    monkeypatch.setenv("ZHIPU_API_KEY", "sk-zp-test")
+    cfg = load_config(str(env_file))
+    assert cfg["provider"] == "zhipu"
+    assert cfg["api_key"] == "sk-zp-test"
+
+
+def test_require_api_key_zhipu_missing_names_right_env(tmp_path, monkeypatch):
+    env_file = tmp_path / "empty.env"
+    env_file.write_text("", encoding="utf-8")
+    monkeypatch.setenv("INTERVIEW_PROVIDER", "zhipu")
+    monkeypatch.delenv("ZHIPU_API_KEY", raising=False)
+    try:
+        require_api_key(str(env_file))
+        raise AssertionError("应当抛出 KeyError")
+    except KeyError as e:
+        assert "ZHIPU_API_KEY" in str(e)
+
+
+def test_load_config_default_model_follows_provider(tmp_path, monkeypatch):
+    env_file = tmp_path / "empty.env"
+    env_file.write_text("", encoding="utf-8")
+    monkeypatch.delenv("INTERVIEW_MODEL", raising=False)
+    monkeypatch.setenv("INTERVIEW_PROVIDER", "zhipu")
+    assert load_config(str(env_file))["model"] == "glm-4.7-flash"
+    monkeypatch.setenv("INTERVIEW_PROVIDER", "dashscope")
+    assert load_config(str(env_file))["model"] == "qwen-plus"
+    monkeypatch.setenv("INTERVIEW_MODEL", "glm-4.7-flash")
+    assert load_config(str(env_file))["model"] == "glm-4.7-flash"
+
+
 def test_load_config_github_defaults(tmp_path, monkeypatch):
     env = tmp_path / ".env"
     env.write_text("DEEPSEEK_API_KEY=sk-test\n", encoding="utf-8")

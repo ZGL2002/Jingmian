@@ -7,6 +7,14 @@ from dotenv import load_dotenv
 PROVIDER_KEY_ENV = {
     "deepseek": "DEEPSEEK_API_KEY",
     "dashscope": "DASHSCOPE_API_KEY",
+    "zhipu": "ZHIPU_API_KEY",
+}
+
+# 未显式设置 INTERVIEW_MODEL 时按 provider 取默认模型
+PROVIDER_DEFAULT_MODEL = {
+    "deepseek": "deepseek-chat",
+    "dashscope": "qwen-plus",
+    "zhipu": "glm-4.7-flash",
 }
 
 
@@ -17,7 +25,9 @@ def load_config(env_path: str | None = None) -> dict:
     return {
         "provider": provider,
         "api_key": os.environ.get(key_env, ""),
-        "model": os.environ.get("INTERVIEW_MODEL", "deepseek-chat"),
+        "model": os.environ.get(
+            "INTERVIEW_MODEL", PROVIDER_DEFAULT_MODEL.get(provider, "deepseek-chat")
+        ),
         "min_questions": int(os.environ.get("INTERVIEW_MIN_QUESTIONS", "10")),
         "language": os.environ.get("INTERVIEW_LANG", "zh"),
         "answer_offload_threshold": int(

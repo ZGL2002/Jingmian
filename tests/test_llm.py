@@ -1,6 +1,6 @@
 import pytest
 from interview_agent.llm import (
-    LLMClient, DeepSeekClient, DashScopeClient, LLMError, AssistantTurn, ToolCall,
+    LLMClient, DeepSeekClient, DashScopeClient, ZhipuClient, LLMError, AssistantTurn, ToolCall,
     create_llm,
 )
 
@@ -83,3 +83,23 @@ def test_dashscope_uses_compatible_mode_base_url(monkeypatch):
     monkeypatch.setattr(mod, "OpenAI", FakeOpenAI)
     DashScopeClient("sk-ali", "qwen-plus")
     assert captured["base_url"] == "https://dashscope.aliyuncs.com/compatible-mode/v1"
+
+
+def test_create_llm_zhipu():
+    c = create_llm("sk-zp", "glm-4.7-flash", provider="zhipu")
+    assert isinstance(c, ZhipuClient)
+
+
+def test_zhipu_uses_bigmodel_base_url_and_default_model(monkeypatch):
+    captured = {}
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    import interview_agent.llm as mod
+    monkeypatch.setattr(mod, "OpenAI", FakeOpenAI)
+    ZhipuClient("sk-zp")
+    assert captured["base_url"] == "https://open.bigmodel.cn/api/paas/v4"
+    assert captured["api_key"] == "sk-zp"
+    assert create_llm("sk", provider="zhipu")._model == "glm-4.7-flash"
