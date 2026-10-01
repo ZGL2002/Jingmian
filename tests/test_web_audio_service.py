@@ -121,9 +121,17 @@ def test_from_config_provider_branches():
     })
     assert svc2.engine.tts_model == "cosyvoice-v1"
     assert svc2.engine.asr_model == "fun-asr-realtime"
-    # 本地引擎阶段 3 提供；未知 provider 直接报错
-    with pytest.raises(ValueError, match="local"):
-        AudioService.from_config({"audio_provider": "local"})
+    # 本地引擎：LocalEngine，无需任何 key，地址取自配置（尾斜杠归一）
+    svc3 = AudioService.from_config({
+        "audio_provider": "local",
+        "funasr_ws_url": "ws://127.0.0.1:11095",
+        "cosyvoice_url": "http://127.0.0.1:19880/",
+    })
+    from interview_agent.web.local_audio import LocalEngine
+    assert isinstance(svc3.engine, LocalEngine)
+    assert svc3.engine.funasr_ws_url == "ws://127.0.0.1:11095"
+    assert svc3.engine.cosyvoice_url == "http://127.0.0.1:19880"
+    # 未知 provider 直接报错
     with pytest.raises(ValueError, match="不支持的语音引擎"):
         AudioService.from_config({"audio_provider": "xxx"})
 
@@ -136,6 +144,22 @@ def test_load_config_audio_provider(tmp_path, monkeypatch):
     assert load_config(str(env))["audio_provider"] == ""
     monkeypatch.setenv("INTERVIEW_AUDIO_PROVIDER", "local")
     assert load_config(str(env))["audio_provider"] == "local"
+
+
+def test_load_config_local_audio_urls(tmp_path, monkeypatch):
+    from interview_agent.config import load_config
+    env = tmp_path / ".env"
+    env.write_text("", encoding="utf-8")
+    for k in ("FUNASR_WS_URL", "COSYVOICE_URL"):
+        monkeypatch.delenv(k, raising=False)
+    cfg = load_config(str(env))
+    assert cfg["funasr_ws_url"] == "ws://127.0.0.1:10095"
+    assert cfg["cosyvoice_url"] == "http://127.0.0.1:9880"
+    monkeypatch.setenv("FUNASR_WS_URL", "ws://192.168.1.5:10095")
+    monkeypatch.setenv("COSYVOICE_URL", "http://192.168.1.5:9933")
+    cfg = load_config(str(env))
+    assert cfg["funasr_ws_url"] == "ws://192.168.1.5:10095"
+    assert cfg["cosyvoice_url"] == "http://192.168.1.5:9933"
 
 
 def test_load_config_tts_keys(tmp_path, monkeypatch):

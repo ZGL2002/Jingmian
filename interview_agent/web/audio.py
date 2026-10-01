@@ -153,6 +153,9 @@ class AudioService:
                 tts_model=cfg.get("tts_model", "cosyvoice-v2"),
                 asr_model=cfg.get("asr_model", "paraformer-realtime-v2"),
             ))
+        if provider == "local":
+            from .local_audio import LocalEngine
+            return cls(LocalEngine.from_config(cfg))
         if not provider:
             return None
         raise ValueError(f"不支持的语音引擎 provider: {provider}")

@@ -47,6 +47,9 @@ def load_config(env_path: str | None = None) -> dict:
         "dashscope_api_key": os.environ.get("DASHSCOPE_API_KEY", ""),
         # 语音引擎选择：未设置时按现状推断（有 DASHSCOPE_API_KEY 即 dashscope）
         "audio_provider": os.environ.get("INTERVIEW_AUDIO_PROVIDER", ""),
+        # 本地语音服务地址（INTERVIEW_AUDIO_PROVIDER=local 时使用）
+        "funasr_ws_url": os.environ.get("FUNASR_WS_URL", "ws://127.0.0.1:10095"),
+        "cosyvoice_url": os.environ.get("COSYVOICE_URL", "http://127.0.0.1:9880"),
         "asr_model": os.environ.get("INTERVIEW_ASR_MODEL", "paraformer-realtime-v2"),
         "tts_model": os.environ.get("INTERVIEW_TTS_MODEL", "cosyvoice-v2"),
         "tts_voice": os.environ.get("INTERVIEW_TTS_VOICE", ""),
