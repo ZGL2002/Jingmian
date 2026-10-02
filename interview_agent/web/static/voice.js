@@ -40,6 +40,7 @@ class LiveVoiceEngine {
     this.turnBuffers = [];
     this.lastTurnBuffers = null;
     this._turnEnded = false;
+    this._muted = false;
     // barge-in 阈值自适应
     this.ambient = Infinity;
     this.warmup = 0;
@@ -166,13 +167,21 @@ class LiveVoiceEngine {
   }
 
   _interrupt() {
-    this.gen++;
-    this.sentenceQueue = [];
+    // 打断 = 停止出声，但不清队列、不作废在途请求：本轮剩余音频静默记录，
+    // 保证「重听」能回放完整提问（此前清队列导致打断后重听只剩前半截）
     for (const src of this.scheduled) { try { src.stop(); } catch (e) { /* 已结束 */ } }
     this.scheduled.clear();
     this.nextTime = 0;
+    this._muted = true;
     this.gateOpen = true;
     this._setState("listening");
+  }
+
+  _shutdownAudio() {
+    // 面试结束的硬停：作废 pump 与在途请求，静默丢弃剩余音频
+    this.gen++;
+    this.sentenceQueue = [];
+    this._interrupt();
   }
 
   // —— 识别事件：字幕 + 攒句自动提交 ——
@@ -211,6 +220,7 @@ class LiveVoiceEngine {
     if (this._turnEnded) { // 新一轮第一段 delta：此刻才切换缓冲，上轮尾块仍落上轮
       this._turnEnded = false;
       this.turnBuffers = [];
+      this._muted = false; // 新一轮恢复正常播报（上一轮可能被打断后静默记录）
     }
     this._pending += text;
     const [finished, rest] = splitSentences(this._pending);
@@ -293,7 +303,8 @@ class LiveVoiceEngine {
     for (let i = 0; i < n; i++) f32[i] = dv.getInt16(i * 2, true) / 32768;
     const buffer = this.ctx.createBuffer(1, n, TTS_RATE);
     buffer.copyToChannel(f32, 0);
-    (buf || this.turnBuffers).push(buffer);
+    (buf || this.turnBuffers).push(buffer); // 无论是否出声都记录，供重听完整回放
+    if (this._muted) return; // 被打断后的本轮剩余音频：只记录不播放
     this.gateOpen = false; // 回声闸门：播报期间不向识别流送麦克风
     this._setState("speaking");
     const src = this.ctx.createBufferSource();
@@ -318,13 +329,24 @@ class LiveVoiceEngine {
   }
 
   async playTurn(buffers) {
-    // 重听：按序播放该提问自己的音频（重听不进整场录音）
+    // 只播最新点击的重听：先停掉正在播的重听/面试官语音（静默记录其剩余部分）。
+    // 重听源也挂进 scheduled：可被开口打断，且占用回声闸门防混入识别
+    this._interrupt();
+    // 打断后立即重听：本轮剩余音频可能仍在合成在途，等它落地（上限 5s）保证回放完整
+    const deadline = performance.now() + 5000;
+    while (this.pumping && !this.stopped && performance.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
     for (const b of buffers || []) {
+      if (this.stopped) return;
       await new Promise((resolve) => {
         const src = this.ctx.createBufferSource();
         src.buffer = b;
-        src.connect(this.ctx.destination);
-        src.onended = resolve;
+        src.connect(this.ctx.destination); // 重听不进整场录音
+        this.scheduled.add(src);
+        this.gateOpen = false;
+        this._setState("speaking");
+        src.onended = () => { this.scheduled.delete(src); this._checkGateReopen(); resolve(); };
         src.start();
       });
     }
@@ -334,7 +356,7 @@ class LiveVoiceEngine {
     if (this.stopped) return;
     this.stopped = true;
     if (this.submitTimer) clearTimeout(this.submitTimer);
-    this._interrupt();
+    this._shutdownAudio();
     if (this.ws) {
       try { if (this.ws.readyState === WebSocket.OPEN) this.ws.send('{"type":"stop"}'); } catch (e) { /* 忽略 */ }
       try { this.ws.close(); } catch (e) { /* 忽略 */ }
