@@ -43,6 +43,13 @@ class OpenAICompatibleClient(LLMClient):
     BASE_URL: str = ""
     LABEL: str = "LLM"
 
+    @staticmethod
+    def _normalize_messages(messages: list[dict]) -> list[dict]:
+        """智谱等 provider 要求对话中至少一条 user 消息：纯 system 开场会被 400（1214）拒绝。"""
+        if messages and not any(m.get("role") == "user" for m in messages):
+            return [*messages, {"role": "user", "content": "请开始。"}]
+        return messages
+
     def __init__(self, api_key: str, model: str):
         self._client = OpenAI(
             api_key=api_key,
@@ -53,7 +60,7 @@ class OpenAICompatibleClient(LLMClient):
 
     def chat(self, messages: list[dict], tools: list[dict] | None = None, max_tokens: int | None = None) -> AssistantTurn:
         try:
-            kwargs: dict = {"model": self._model, "messages": messages}
+            kwargs: dict = {"model": self._model, "messages": self._normalize_messages(messages)}
             if tools:
                 kwargs["tools"] = tools
             if max_tokens:
@@ -70,7 +77,7 @@ class OpenAICompatibleClient(LLMClient):
         return AssistantTurn(content=msg.content, tool_calls=tool_calls)
 
     def chat_stream(self, messages: list[dict], tools: list[dict] | None = None, max_tokens: int | None = None):
-        kwargs: dict = {"model": self._model, "messages": messages, "stream": True}
+        kwargs: dict = {"model": self._model, "messages": self._normalize_messages(messages), "stream": True}
         if tools:
             kwargs["tools"] = tools
         if max_tokens:

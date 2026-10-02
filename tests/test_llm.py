@@ -62,6 +62,22 @@ def test_auth_error_mapped(monkeypatch):
         client.chat([])
 
 
+def test_chat_appends_user_when_system_only(monkeypatch):
+    # 智谱拒绝纯 system 的消息列表（1214）：客户端层自动补一条 user
+    client, completions = make_client(monkeypatch, FakeMessage(content="你好"))
+    client.chat([{"role": "system", "content": "你是面试官"}])
+    sent = completions.calls[0]["messages"]
+    assert sent[0]["role"] == "system"
+    assert sent[-1] == {"role": "user", "content": "请开始。"}
+
+
+def test_chat_keeps_messages_untouched_when_user_present(monkeypatch):
+    client, completions = make_client(monkeypatch, FakeMessage(content="好"))
+    msgs = [{"role": "system", "content": "s"}, {"role": "user", "content": "hi"}]
+    client.chat(msgs)
+    assert completions.calls[0]["messages"] == msgs  # 已有 user：原样发送且不改动入参
+
+
 def test_create_llm_dashscope():
     c = create_llm("sk-ali", "qwen-plus", provider="dashscope")
     assert isinstance(c, DashScopeClient)
