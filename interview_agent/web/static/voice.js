@@ -39,6 +39,7 @@ class LiveVoiceEngine {
     this.pcmTail = new Uint8Array(0);
     this.turnBuffers = [];
     this.lastTurnBuffers = null;
+    this._turnEnded = false;
     // barge-in 阈值自适应
     this.ambient = Infinity;
     this.warmup = 0;
@@ -204,22 +205,29 @@ class LiveVoiceEngine {
   }
 
   // —— 面试官语音：SSE 流式合成 → PCM 块顺序调度 ——
+  // sentenceQueue 的元素带轮次标签（{text, buf}）：上一轮仍在途的尾块
+  // 不会错落进下一轮的音频缓冲，保证「重听」回放的归属正确
   feedDelta(text) {
+    if (this._turnEnded) { // 新一轮第一段 delta：此刻才切换缓冲，上轮尾块仍落上轮
+      this._turnEnded = false;
+      this.turnBuffers = [];
+    }
     this._pending += text;
     const [finished, rest] = splitSentences(this._pending);
     this._pending = rest;
-    finished.forEach((s) => this.sentenceQueue.push(s));
+    finished.forEach((s) => this.sentenceQueue.push({ text: s, buf: this.turnBuffers }));
     this._pump();
   }
 
   endTurn() {
     if (this._pending.trim()) {
-      this.sentenceQueue.push(this._pending.trim());
+      this.sentenceQueue.push({ text: this._pending.trim(), buf: this.turnBuffers });
       this._pending = "";
       this._pump();
     }
+    this._turnEnded = true;
     this.lastTurnBuffers = this.turnBuffers;
-    this.turnBuffers = [];
+    return this.lastTurnBuffers; // 供该轮的「重听」按钮捕获自己的音频引用
   }
 
   async _pump() {
@@ -229,7 +237,8 @@ class LiveVoiceEngine {
     try {
       while (this.sentenceQueue.length) {
         if (gen !== this.gen) return;
-        await this._speakStream(this.sentenceQueue.shift(), gen);
+        const item = this.sentenceQueue.shift();
+        await this._speakStream(item.text, item.buf, gen);
       }
     } finally {
       this.pumping = false;
@@ -237,7 +246,7 @@ class LiveVoiceEngine {
     }
   }
 
-  async _speakStream(sentence, gen) {
+  async _speakStream(sentence, buf, gen) {
     try {
       const resp = await fetch("/api/tts/stream", {
         method: "POST",
@@ -262,7 +271,7 @@ class LiveVoiceEngine {
             if (data === "[DONE]") return;
             if (data.startsWith("{")) { console.warn("TTS 流错误", data); return; }
             if (gen !== this.gen) return; // 已被打断，丢弃剩余音频
-            this._schedulePcm(_b64ToBytes(data));
+            this._schedulePcm(_b64ToBytes(data), buf);
           }
         }
       }
@@ -271,7 +280,7 @@ class LiveVoiceEngine {
     }
   }
 
-  _schedulePcm(bytes) {
+  _schedulePcm(bytes, buf) {
     const all = new Uint8Array(this.pcmTail.length + bytes.length);
     all.set(this.pcmTail);
     all.set(bytes, this.pcmTail.length);
@@ -284,7 +293,7 @@ class LiveVoiceEngine {
     for (let i = 0; i < n; i++) f32[i] = dv.getInt16(i * 2, true) / 32768;
     const buffer = this.ctx.createBuffer(1, n, TTS_RATE);
     buffer.copyToChannel(f32, 0);
-    this.turnBuffers.push(buffer);
+    (buf || this.turnBuffers).push(buffer);
     this.gateOpen = false; // 回声闸门：播报期间不向识别流送麦克风
     this._setState("speaking");
     const src = this.ctx.createBufferSource();
@@ -308,12 +317,13 @@ class LiveVoiceEngine {
     }, GATE_REOPEN_MS);
   }
 
-  async replayLastTurn() {
-    for (const b of this.lastTurnBuffers || []) {
+  async playTurn(buffers) {
+    // 重听：按序播放该提问自己的音频（重听不进整场录音）
+    for (const b of buffers || []) {
       await new Promise((resolve) => {
         const src = this.ctx.createBufferSource();
         src.buffer = b;
-        src.connect(this.ctx.destination); // 重听不进整场录音
+        src.connect(this.ctx.destination);
         src.onended = resolve;
         src.start();
       });

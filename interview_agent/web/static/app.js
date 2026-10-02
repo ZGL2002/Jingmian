@@ -86,13 +86,14 @@ function addReportLink() {
   $("chat").appendChild(box);
 }
 
-function attachReplayButton(box) {
+function attachReplayButton(box, audio) {
   if (!voice || !box) return;
   box.querySelectorAll(".replay-btn").forEach((b) => b.remove());
   const btn = document.createElement("button");
   btn.className = "replay-btn";
   btn.textContent = "🔊 重听";
-  btn.onclick = () => voice.replayLastTurn().catch((e) => console.warn(e));
+  // 捕获创建时该轮的音频引用（而非点击时的全局状态），各提问回放各自的音频
+  btn.onclick = () => voice.playTurn(audio).catch((e) => console.warn(e));
   box.appendChild(btn);
 }
 
@@ -198,7 +199,7 @@ function handleEvent(e) {
       lastInterviewerBox = pendingBox || lastInterviewerBox;
       pendingBox = null;
       pendingBuf = "";
-      if (voice) { voice.endTurn(); attachReplayButton(lastInterviewerBox); }
+      if (voice) { attachReplayButton(lastInterviewerBox, voice.endTurn()); }
       flushPendingAnswers(); // 续说补发：本轮生成已结束（busy 已释放）
       break;
     case "error":
