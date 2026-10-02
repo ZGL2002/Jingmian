@@ -126,7 +126,14 @@ class WavPcmStreamConverter:
 
 
 def _f32_to_i16(v: float) -> int:
-    return max(-32768, min(32767, round(v * 32767)))
+    if v != v:  # NaN 防护：上游偶发毛刺样本置为静音，避免整条流水线中断
+        return 0
+    x = v * 32767
+    if x >= 32767:  # 含 ±inf 削顶，先钳位避免 round 溢出
+        return 32767
+    if x <= -32768:
+        return -32768
+    return round(x)
 
 
 def _pack_i16(values: list[int]) -> bytes:

@@ -345,13 +345,14 @@ def test_converter_rejects_non_16bit():
 
 
 def test_converter_accepts_float32_wav():
-    # 本地 CosyVoice 常见输出：32bit 浮点（format=3）→ 转 int16
+    # 本地 CosyVoice 常见输出：32bit 浮点（format=3）→ 转 int16；NaN 毛刺样本置静音
     conv = WavPcmStreamConverter()
-    floats = [0.5, -0.5, 0.25, -1.0, 1.0, 0.0]
+    floats = [0.5, -0.5, 0.25, -1.0, 1.0, 0.0, float("nan"), float("inf")]
     pcm = struct.pack(f"<{len(floats)}f", *floats)
     body = (b"RIFF" + struct.pack("<I", 36 + len(pcm)) + b"WAVE" + b"fmt " +
             struct.pack("<IHHIIHH", 16, 3, 1, 22050, 22050 * 4, 4, 32) + b"data" +
             struct.pack("<I", len(pcm)) + pcm)
     out = b"".join(filter(None, (conv.feed(body[i:i + 7]) for i in range(0, len(body), 7)))) + conv.flush()
     got = struct.unpack(f"<{len(out) // 2}h", out)
-    assert got == (16384, -16384, 8192, -32767, 32767, 0)  # -1.0 按非对称缩放（×32767）
+    assert got[:6] == (16384, -16384, 8192, -32767, 32767, 0)  # -1.0 按非对称缩放（×32767）
+    assert got[6] == 0 and got[7] == 32767  # NaN→静音；inf→削顶
