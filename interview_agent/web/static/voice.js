@@ -1,6 +1,7 @@
 // static/voice.js —— 实时语音引擎：流式识别（边说边出字）、攒句自动提交、
 // 流式合成首包即播、回声闸门与 barge-in 打断、整场混音录制。
 "use strict";
+console.info("[voice.js] v20261003 重听修复版（归属/互斥/打断补录）");
 
 const PCM_RATE = 16000;       // 采集与识别采样率（AudioContext 固定 16k，浏览器自动重采样）
 const TTS_RATE = 22050;       // 流式合成 PCM 采样率

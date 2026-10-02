@@ -1,4 +1,5 @@
 const $ = (id) => document.getElementById(id);
+console.info("[app.js] v20261003");
 let currentSessionId = null;
 let currentStyle = "serious";
 let voice = null;            // LiveVoiceEngine 实例，语音模式开启时非空
