@@ -60,8 +60,10 @@ class InterviewTask:
     def _run(self) -> None:
         try:
             self._drain_repo_injection()  # 审读极快完成的场景：开场前注入
-            turn = self.agent.llm.chat(
-                self.session.messages, tools=self.agent.registry.schemas()
+            # 开场是全场唯一不走 run_turn 的 LLM 调用：必须带重试，
+            # 否则一次免费档限流（429/1305）就会让整场面试无提问而死
+            turn = self.agent.chat_with_retry(
+                self.session.messages, tools=self.agent.registry.schemas(), attempts=5
             )
             opening = _strip_role_leak(turn.content or "你好，我是面试官，我们开始。")
             self.session.add_interviewer_message(opening)

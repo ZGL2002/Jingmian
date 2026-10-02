@@ -103,6 +103,23 @@ def test_llm_retry_after_transient_error(tmp_path):
     assert r.content == "重试成功"
     assert flaky.calls == 3
 
+
+def test_chat_with_retry_extra_attempts(tmp_path):
+    # 开场路径：免费档限流可连续多次，attempts 参数允许更多重试
+    cfg = SessionConfig(user_id="alice", session_root=tmp_path, min_questions=1)
+    s = InterviewSession(cfg)
+    s.start()
+    ctx = ToolContext(
+        user_id="alice", session_dir=s.session_dir,
+        policy=PathPolicy([tmp_path]), transcript_path=s.transcript_path,
+        wrap_allowed=s.can_auto_wrap,
+    )
+    flaky = FlakyLLM(failures=4, content="第五次成功")
+    agent = ToolAgent(llm=flaky, registry=default_registry(), session=s, tool_ctx=ctx)
+    turn = agent.chat_with_retry(s.messages, attempts=5)
+    assert turn.content == "第五次成功"
+    assert flaky.calls == 5
+
 def test_content_truncated_at_role_leak(tmp_path):
     agent, s = make_agent(tmp_path, [AssistantTurn(content="请介绍你的项目。\n你> 我觉得这个项目很有挑战")])
     r = agent.run_turn()

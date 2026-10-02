@@ -45,9 +45,15 @@ class ToolAgent:
         self.tool_ctx = tool_ctx
         self.max_iterations = max_iterations
 
-    def _chat(self, messages: list[dict], tools: list[dict] | None = None, max_tokens: int | None = None):
+    def chat_with_retry(self, messages: list[dict], tools: list[dict] | None = None,
+                        max_tokens: int | None = None, attempts: int = 3):
+        """带重试的单次调用（限流感知退避）。开场等场外路径复用，避免一次 429 直接杀死面试。"""
+        return self._chat(messages, tools=tools, max_tokens=max_tokens, attempts=attempts)
+
+    def _chat(self, messages: list[dict], tools: list[dict] | None = None,
+              max_tokens: int | None = None, attempts: int = 3):
         last_error: LLMError | None = None
-        for attempt in range(3):
+        for attempt in range(attempts):
             try:
                 return self.llm.chat(messages, tools=tools, max_tokens=max_tokens)
             except LLMError as e:
