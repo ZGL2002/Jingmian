@@ -25,6 +25,11 @@ class AgentTurnResult:
     wrap_requested: bool = False
 
 
+def _backoff_delay(e: LLMError, attempt: int) -> float:
+    """限流/过载（带 retry_after）等更久；普通错误用短指数退避。"""
+    return min(getattr(e, "retry_after", None) or 0.5 * (2 ** attempt), 60.0)
+
+
 class ToolAgent:
     def __init__(
         self,
@@ -47,7 +52,7 @@ class ToolAgent:
                 return self.llm.chat(messages, tools=tools, max_tokens=max_tokens)
             except LLMError as e:
                 last_error = e
-                time.sleep(0.5 * (2 ** attempt))
+                time.sleep(_backoff_delay(e, attempt))
         assert last_error is not None
         raise last_error
 
@@ -71,7 +76,7 @@ class ToolAgent:
                 return turn
             except LLMError as e:
                 last_error = e
-                time.sleep(0.5 * (2 ** attempt))
+                time.sleep(_backoff_delay(e, attempt))
         assert last_error is not None
         raise last_error
 

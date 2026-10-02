@@ -36,3 +36,24 @@ def test_run_evaluation_writes_report(tmp_path):
     path = run_evaluation(s, OneShotLLM())
     assert path.name == "report.md"
     assert "## 技术准确性" in path.read_text(encoding="utf-8")
+
+
+def test_run_evaluation_retries_rate_limit(tmp_path):
+    # 免费档限流（429/1305）不应让评估直接失败：重试后成功
+    from interview_agent.llm import LLMError
+
+    class FlakyLLM:
+        def __init__(self):
+            self.calls = 0
+
+        def chat(self, messages, tools=None, max_tokens=None):
+            self.calls += 1
+            if self.calls < 3:
+                raise LLMError("智谱 限流或模型过载", retry_after=0.01)
+            return AssistantTurn(content="## 技术准确性\n7 分。")
+
+    s = make_session(tmp_path)
+    llm = FlakyLLM()
+    path = run_evaluation(s, llm)
+    assert llm.calls == 3
+    assert "## 技术准确性" in path.read_text(encoding="utf-8")

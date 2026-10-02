@@ -2,11 +2,15 @@
 from __future__ import annotations
 import json
 from dataclasses import dataclass, field
-from openai import OpenAI, AuthenticationError
+from openai import OpenAI, AuthenticationError, RateLimitError
 
 
 class LLMError(Exception):
-    pass
+    """LLM 调用失败；retry_after 非空表示限流/过载，等待该秒数后重试更有效。"""
+
+    def __init__(self, message: str, retry_after: float | None = None):
+        super().__init__(message)
+        self.retry_after = retry_after
 
 
 @dataclass
@@ -68,6 +72,8 @@ class OpenAICompatibleClient(LLMClient):
             msg = self._client.chat.completions.create(**kwargs).choices[0].message
         except AuthenticationError:
             raise LLMError(f"{self.LABEL} API key 无效或未授权") from None
+        except RateLimitError:
+            raise LLMError(f"{self.LABEL} 限流或模型过载，请稍后重试", retry_after=8.0) from None
         except Exception as e:  # noqa: BLE001 - 统一包装为 LLMError 由上层重试/提示
             raise LLMError(f"{self.LABEL} 调用失败: {e}") from None
         tool_calls = [
@@ -117,6 +123,8 @@ class OpenAICompatibleClient(LLMClient):
             ))
         except AuthenticationError:
             raise LLMError(f"{self.LABEL} API key 无效或未授权") from None
+        except RateLimitError:
+            raise LLMError(f"{self.LABEL} 限流或模型过载，请稍后重试", retry_after=8.0) from None
         except Exception as e:  # noqa: BLE001 - 统一包装为 LLMError 由上层重试/提示
             raise LLMError(f"{self.LABEL} 调用失败: {e}") from None
 

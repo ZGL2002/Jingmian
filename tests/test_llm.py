@@ -62,6 +62,18 @@ def test_auth_error_mapped(monkeypatch):
         client.chat([])
 
 
+def test_rate_limit_mapped_with_retry_after(monkeypatch):
+    # 智谱免费档 1305/429：LLMError 携带 retry_after，上层据此长退避重试
+    import interview_agent.llm as mod
+    class RL(Exception):
+        pass
+    monkeypatch.setattr(mod, "RateLimitError", RL)
+    client, _ = make_client(monkeypatch, FakeMessage(), error=RL())
+    with pytest.raises(LLMError) as ei:
+        client.chat([])
+    assert ei.value.retry_after == 8.0
+
+
 def test_chat_appends_user_when_system_only(monkeypatch):
     # 智谱拒绝纯 system 的消息列表（1214）：客户端层自动补一条 user
     client, completions = make_client(monkeypatch, FakeMessage(content="你好"))
