@@ -250,11 +250,13 @@ function isBusyError(e) {
 
 function flushPendingAnswers() {
   if (!pendingAnswers.length || !currentSessionId) return;
-  const text = pendingAnswers.join("\n");
+  const body = pendingAnswers.join("\n");
   pendingAnswers = [];
+  // 续说落在面试官新问题之后：打标让面试官识别为上一题的补充，而非答非所问
+  const text = "（补充上一题）\n" + body;
   addChat("candidate", text);
   postAnswer(text).catch((e) => {
-    if (isBusyError(e)) pendingAnswers.unshift(text); // 仍在忙，下轮再试
+    if (isBusyError(e)) pendingAnswers.unshift(body); // 仍在忙：重排回未打标原文，下轮补发再加前缀
     else addChat("system", "发送失败：" + e.message);
   });
 }

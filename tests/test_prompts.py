@@ -59,3 +59,10 @@ def test_system_prompt_pending_repos_hint():
     p = build_system_prompt(doc, pending_repos=["a/b"])
     assert "后台" in p and "a/b" in p and "架构" in p
     assert build_system_prompt(doc).find("后台") == -1
+
+
+def test_system_prompt_handles_supplement_marker():
+    # 语音续说补发带「（补充上一题）」标记：面试官须识别为补充而非答非所问
+    p = build_system_prompt(None)
+    assert "（补充上一题）" in p
+    assert "不算答非所问" in p
