@@ -226,17 +226,21 @@ def test_stream_session_error_on_disconnect(monkeypatch):
 # ---- 整段识别（FunASR offline）----
 
 
-def test_transcribe_file_offline(tmp_path, monkeypatch):
+def test_transcribe_file_chunked_2pass(tmp_path, monkeypatch):
+    # 实测整文件直灌（offline/bulk）该服务版本不响应：整段识别走分帧 2pass 协议
     def handler(payload, conn):
         if isinstance(payload, str) and json.loads(payload).get("is_speaking") is False:
-            conn.push({"mode": "offline", "text": "整段文字。", "is_final": True})
+            conn.push({"mode": "2pass-offline", "text": "整段文字，", "is_final": False})
+            conn.push({"mode": "2pass-offline", "text": "第二句。", "is_final": True})
     install_fake_websockets(monkeypatch, fake_connect_factory(handler))
     p = tmp_path / "a.wav"
-    p.write_bytes(wav_bytes(b"\0" * 64, 16000))
-    assert LocalEngine().transcribe_file(p, "wav") == "整段文字。"
+    p.write_bytes(wav_bytes(b"\0" * 6400, 16000))
+    assert LocalEngine().transcribe_file(p, "wav") == "整段文字，第二句。"
     conn = FakeWSConnection.last
-    assert conn.json_sent[0]["mode"] == "offline"
-    assert sum(len(b) for b in conn.binary_sent) == len(p.read_bytes())  # 文件字节全量发出
+    assert conn.json_sent[0]["mode"] == "2pass"
+    assert conn.json_sent[0]["wav_format"] == "pcm"
+    assert len(b"".join(conn.binary_sent)) == 6400  # WAV 头已剥，PCM 全量分帧发出
+    assert all(len(b) <= 3200 for b in conn.binary_sent)
 
 
 def test_transcribe_file_rejects_unsupported_format(tmp_path):

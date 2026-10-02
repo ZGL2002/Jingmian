@@ -274,22 +274,27 @@ class LocalEngine:
         return _FunASRStreamSession(self.funasr_ws_url, on_event)
 
     def transcribe_file(self, path: Path, fmt: str = "wav") -> str:
+        """整段识别：实测该 FunASR 服务版本对整文件直灌（offline/2pass bulk）不响应，
+        改走与流式相同的分帧 2pass 协议（已验证可靠）。非 16k 的 WAV 先用转换器降采样。"""
         if fmt not in ("wav", "pcm"):
             raise AudioError(f"本地 ASR 不支持 {fmt}，仅支持 wav/pcm")
         from websockets.sync.client import connect
-        data = Path(path).read_bytes()
+        pcm = self._load_pcm16k(Path(path), fmt)
         try:
             with connect(self.funasr_ws_url, open_timeout=CONNECT_TIMEOUT,
                          close_timeout=2, max_size=None) as conn:
                 conn.send(json.dumps({
-                    "mode": "offline",
+                    "mode": "2pass",
+                    "chunk_size": [5, 10, 5],
+                    "chunk_interval": 10,
                     "wav_name": Path(path).stem,
-                    "wav_format": fmt,
+                    "wav_format": "pcm",
                     "audio_fs": 16000,
+                    "is_speaking": True,
                     "itn": True,
                 }))
-                for i in range(0, len(data), 64_000):
-                    conn.send(data[i:i + 64_000])
+                for i in range(0, len(pcm), 3200):  # 100ms 帧，与流式会话同节奏
+                    conn.send(pcm[i:i + 3200])
                 conn.send(json.dumps({"is_speaking": False}))
                 texts: list[str] = []
                 while True:
@@ -298,7 +303,8 @@ class LocalEngine:
                         continue
                     resp = json.loads(msg)
                     text = str(resp.get("text") or "").strip()
-                    if text:
+                    # 只取 offline 通道的整句（带标点）；online 增量片段忽略
+                    if text and str(resp.get("mode") or "") == "2pass-offline":
                         texts.append(text)
                     if resp.get("is_final"):
                         break
@@ -312,6 +318,17 @@ class LocalEngine:
                 "请确认 FunASR 服务已启动"
             ) from None
         return "".join(texts).strip()
+
+    @staticmethod
+    def _load_pcm16k(path: Path, fmt: str) -> bytes:
+        data = path.read_bytes()
+        if fmt == "pcm":
+            return data
+        # 转换器自解析 WAV 头：任意采样率/位深/声道统一为 16k 单声道 PCM16
+        #（16k/16bit/单声道时逐字节直通）
+        conv = WavPcmStreamConverter(target_rate=16000)
+        out = b"".join(filter(None, (conv.feed(data[i:i + 8192]) for i in range(0, len(data), 8192))))
+        return out + conv.flush()
 
     # ---- TTS ----
 
