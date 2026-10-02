@@ -1,7 +1,7 @@
 // static/voice.js —— 实时语音引擎：流式识别（边说边出字）、攒句自动提交、
 // 流式合成首包即播、回声闸门与 barge-in 打断、整场混音录制。
 "use strict";
-console.info("[voice.js] v20261003 重听修复版（归属/互斥/打断补录）");
+console.info("[voice.js] v20261003b 重听互斥修复");
 
 const PCM_RATE = 16000;       // 采集与识别采样率（AudioContext 固定 16k，浏览器自动重采样）
 const TTS_RATE = 22050;       // 流式合成 PCM 采样率
@@ -42,6 +42,7 @@ class LiveVoiceEngine {
     this.lastTurnBuffers = null;
     this._turnEnded = false;
     this._muted = false;
+    this._playGen = 0;           // 重听播放代数：新的重听/打断使旧的播放循环整体作废
     // barge-in 阈值自适应
     this.ambient = Infinity;
     this.warmup = 0;
@@ -167,11 +168,18 @@ class LiveVoiceEngine {
     }
   }
 
-  _interrupt() {
-    // 打断 = 停止出声，但不清队列、不作废在途请求：本轮剩余音频静默记录，
-    // 保证「重听」能回放完整提问（此前清队列导致打断后重听只剩前半截）
+  _stopAllSources() {
     for (const src of this.scheduled) { try { src.stop(); } catch (e) { /* 已结束 */ } }
     this.scheduled.clear();
+  }
+
+  _interrupt() {
+    // 打断 = 停止出声，但不清队列、不作废在途请求：本轮剩余音频静默记录，
+    // 保证「重听」能回放完整提问（此前清队列导致打断后重听只剩前半截）。
+    // 递增播放代数：正在 await 的旧重听循环恢复后见代数已变即整体退出——
+    // 否则旧重听被停掉当前块后会接着播下一块（多个重听声音重叠的根源）
+    this._playGen++;
+    this._stopAllSources();
     this.nextTime = 0;
     this._muted = true;
     this.gateOpen = true;
@@ -330,16 +338,18 @@ class LiveVoiceEngine {
   }
 
   async playTurn(buffers) {
-    // 只播最新点击的重听：先停掉正在播的重听/面试官语音（静默记录其剩余部分）。
-    // 重听源也挂进 scheduled：可被开口打断，且占用回声闸门防混入识别
+    // 只播最新点击的重听：打断使旧重听循环整体作废。重听源挂进 scheduled：
+    // 可被开口打断，且占用回声闸门防混入识别
     this._interrupt();
+    const my = this._playGen;
+    const alive = () => !this.stopped && this._playGen === my;
     // 打断后立即重听：本轮剩余音频可能仍在合成在途，等它落地（上限 5s）保证回放完整
     const deadline = performance.now() + 5000;
-    while (this.pumping && !this.stopped && performance.now() < deadline) {
+    while (this.pumping && alive() && performance.now() < deadline) {
       await new Promise((r) => setTimeout(r, 100));
     }
     for (const b of buffers || []) {
-      if (this.stopped) return;
+      if (!alive()) return;
       await new Promise((resolve) => {
         const src = this.ctx.createBufferSource();
         src.buffer = b;
